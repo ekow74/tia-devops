@@ -45,3 +45,9 @@ variable "cloud_init" {
   type        = string
   description = "Minimal first-boot cloud-init. Changes after creation are intentionally ignored."
 }
+
+variable "deployment_authorized" {
+  type        = bool
+  description = "Must be explicitly true in the trusted HCP workspace after A2/A3 qualification."
+  default     = false
+}
