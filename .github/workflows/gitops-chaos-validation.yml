@@ -17,7 +17,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -31,6 +31,7 @@ jobs:
           --expected-environment staging
           --current-reconciler-version 0.2.0
           --current-db-schema 6
+          --now 2026-10-26T21:30:00Z
 
       - name: Negative desired-state controls
         shell: bash
@@ -53,6 +54,11 @@ jobs:
           d = json.loads(json.dumps(base))
           d['migration'] = {'phase': 'contract', 'bundle_digest': 'sha256:' + '9'*64}
           Path('/tmp/unsafe-contract.json').write_text(json.dumps(d))
+
+          d = json.loads(json.dumps(base))
+          d['issued_at'] = '2026-10-27T04:00:00Z'
+          d['expires_at'] = '2026-10-28T04:00:00Z'
+          Path('/tmp/unsafe-future.json').write_text(json.dumps(d))
           PY
           for f in /tmp/unsafe-latest.json /tmp/unsafe-command.json /tmp/unsafe-contract.json; do
             if python3 ksp-gitops/scripts/verify_desired_state.py "$f"; then
@@ -60,30 +66,61 @@ jobs:
               exit 1
             fi
           done
+          if python3 ksp-gitops/scripts/verify_desired_state.py /tmp/unsafe-future.json --now 2026-10-26T21:30:00Z; then
+            echo 'future-issued desired state unexpectedly passed' >&2
+            exit 1
+          fi
           if python3 ksp-gitops/scripts/verify_desired_state.py ksp-gitops/desired-state/staging.example.json --expected-environment production; then
             echo 'staging document unexpectedly passed production environment binding' >&2
             exit 1
           fi
           echo 'desired-state-negative-controls: PASS'
 
-      - name: F1 single-authority static controls
+      - name: Install pinned Cosign
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x ksp-gitops/scripts/verify_signed_desired_state.sh
-          if ksp-gitops/scripts/verify_signed_desired_state.sh \
-              ksp-gitops/desired-state/staging.example.json \
-              /tmp/nonexistent-promotion-bundle \
-              /tmp/nonexistent-promotion-key \
-              /tmp/nonexistent-build-key; then
-            echo 'unsigned desired state unexpectedly passed authority verifier' >&2
+          source ksp-gitops/reconciler/tool-versions.env
+          go install "github.com/sigstore/cosign/v2/cmd/cosign@${COSIGN_VERSION}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: F1 real cryptographic authority tests
+        shell: bash
+        env:
+          COSIGN_PASSWORD: ksp-ci-ephemeral-only
+        run: |
+          set -euo pipefail
+          source ksp-gitops/reconciler/tool-versions.env
+          cosign version | grep -q "${COSIGN_VERSION#v}"
+          chmod +x ksp-gitops/scripts/verify_promotion_signature.sh ksp-gitops/scripts/verify_signed_desired_state.sh
+          DS=ksp-gitops/desired-state/staging.example.json
+
+          cosign generate-key-pair --output-key-prefix /tmp/promotion >/dev/null
+          cosign generate-key-pair --output-key-prefix /tmp/build >/dev/null
+
+          # F1-T01: unsigned/tampered authority is refused.
+          : >/tmp/unsigned.bundle
+          if ksp-gitops/scripts/verify_promotion_signature.sh "$DS" /tmp/unsigned.bundle /tmp/promotion.pub; then
+            echo 'F1-T01 failed: unsigned desired state accepted' >&2
             exit 1
           fi
+
+          # F1-T02: a build key cannot impersonate the promotion key.
+          cosign sign-blob --yes --tlog-upload=false --key /tmp/build.key --bundle /tmp/build-as-promotion.bundle "$DS" >/dev/null
+          if ksp-gitops/scripts/verify_promotion_signature.sh "$DS" /tmp/build-as-promotion.bundle /tmp/promotion.pub; then
+            echo 'F1-T02 failed: build-key-signed desired state accepted' >&2
+            exit 1
+          fi
+
+          # F1-T03: correctly promotion-signed desired state is accepted.
+          cosign sign-blob --yes --tlog-upload=false --key /tmp/promotion.key --bundle /tmp/promotion.bundle "$DS" >/dev/null
+          ksp-gitops/scripts/verify_promotion_signature.sh "$DS" /tmp/promotion.bundle /tmp/promotion.pub
+
           if grep -R -E 'git[[:space:]]+(clone|pull|fetch|checkout)' ksp-gitops/scripts ksp-gitops/reconciler; then
             echo 'runtime trust path unexpectedly contains Git fetch/checkout command' >&2
             exit 1
           fi
-          echo 'F1-static-controls: PASS (cryptographic key-role qualification runs on control/staging VM)'
+          echo 'F1 cryptographic controls: PASS'
 
       - name: F2 anti-reconciliation policy tests
         shell: bash
@@ -102,26 +139,58 @@ jobs:
           python3 - <<'PY'
           import json
           from pathlib import Path
-          d=json.loads(Path('ksp-gitops/desired-state/staging.example.json').read_text())
-          r=json.loads(Path('ksp-gitops/tests/revocations.example.json').read_text())
-          r['revoked_digests']=[d['knowledge']['pharmacology']]
+          ds=json.loads(Path('ksp-gitops/desired-state/staging.example.json').read_text())
+          rt=json.loads(Path('ksp-gitops/tests/runtime.example.json').read_text())
+          rv=json.loads(Path('ksp-gitops/tests/revocations.example.json').read_text())
+          pharm=ds['knowledge']['pharmacology']
+
+          r=json.loads(json.dumps(rv)); r['revoked_digests']=[pharm]
           Path('/tmp/revoked.json').write_text(json.dumps(r))
 
-          rt=json.loads(Path('ksp-gitops/tests/runtime.example.json').read_text())
-          rt['target_release_sequence']=43
-          Path('/tmp/runtime-lower.json').write_text(json.dumps(rt))
+          x=json.loads(json.dumps(rt)); x['active_digests']=[pharm]
+          Path('/tmp/runtime-revoked.json').write_text(json.dumps(x))
 
-          rt=json.loads(Path('ksp-gitops/tests/runtime.example.json').read_text())
-          rt['consecutive_failed_applies']=3
-          Path('/tmp/runtime-flap.json').write_text(json.dumps(rt))
+          x=json.loads(json.dumps(rt)); x['target_release_sequence']=43
+          Path('/tmp/runtime-lower.json').write_text(json.dumps(x))
 
-          expired=json.loads(Path('ksp-gitops/desired-state/staging.example.json').read_text())
-          expired['issued_at']='2026-10-24T00:00:00Z'
-          expired['expires_at']='2026-10-25T00:00:00Z'
-          Path('/tmp/expired.json').write_text(json.dumps(expired))
+          x=json.loads(json.dumps(rt)); x['consecutive_failed_applies']=3
+          Path('/tmp/runtime-flap.json').write_text(json.dumps(x))
+
+          x=json.loads(json.dumps(rt)); x['last_applied_sequence']=43
+          Path('/tmp/runtime-last-applied-43.json').write_text(json.dumps(x))
+
+          x=json.loads(json.dumps(rt)); x['last_seen_revocation_sequence']=9
+          Path('/tmp/runtime-last-revocation-9.json').write_text(json.dumps(x))
+
+          x=json.loads(json.dumps(rt)); x['last_seen_revocation_sequence']=9; x['active_digests']=[pharm]; x['quarantined_digests']=[pharm]
+          Path('/tmp/runtime-persisted-quarantine.json').write_text(json.dumps(x))
+
+          x=json.loads(json.dumps(rt)); x['ntp_synchronized']=False
+          Path('/tmp/runtime-ntp-false.json').write_text(json.dumps(x))
+
+          d=json.loads(json.dumps(ds)); d['sequence']=41
+          Path('/tmp/replay-desired.json').write_text(json.dumps(d))
+
+          r=json.loads(json.dumps(rv)); r['sequence']=7
+          Path('/tmp/replay-revocation.json').write_text(json.dumps(r))
+
+          d=json.loads(json.dumps(ds)); d['issued_at']='2026-10-27T04:00:00Z'; d['expires_at']='2026-10-28T04:00:00Z'
+          Path('/tmp/future-issued.json').write_text(json.dumps(d))
+
+          d=json.loads(json.dumps(ds)); d['issued_at']='2026-10-24T00:00:00Z'; d['expires_at']='2026-10-25T00:00:00Z'
+          Path('/tmp/expired.json').write_text(json.dumps(d))
           PY
 
+          # Revoked desired/running content.
           out=$(python3 $EVAL $DS $RT /tmp/revoked.json $DP --drift-class image_digest_mismatch $FLAGS || true)
+          echo "$out" | grep -q '"action": "QUARANTINE"'
+
+          # F2-T08: freeze never pins recalled running content.
+          out=$(python3 $EVAL $DS /tmp/runtime-revoked.json /tmp/revoked.json $DP --drift-class image_digest_mismatch $FLAGS --freeze-present --freeze-signature-verified || true)
+          echo "$out" | grep -q '"action": "QUARANTINE"'
+
+          # F2-T09: bad desired-state authority never pins recalled running content.
+          out=$(python3 $EVAL $DS /tmp/runtime-revoked.json /tmp/revoked.json $DP --drift-class image_digest_mismatch --build-signature-verified --revocation-signature-verified --now 2026-10-26T21:30:00Z || true)
           echo "$out" | grep -q '"action": "QUARANTINE"'
 
           out=$(python3 $EVAL $DS $RT $RV $DP --drift-class image_digest_mismatch $FLAGS --freeze-present --freeze-signature-verified || true)
@@ -130,7 +199,25 @@ jobs:
           out=$(python3 $EVAL $DS /tmp/runtime-lower.json $RV $DP --drift-class image_digest_mismatch $FLAGS || true)
           echo "$out" | grep -q '"action": "REFUSE"'
 
+          # F2-T10: older signed desired-state document is replay-protected.
+          out=$(python3 $EVAL /tmp/replay-desired.json /tmp/runtime-last-applied-43.json $RV $DP --drift-class image_digest_mismatch $FLAGS || true)
+          echo "$out" | grep -q '"action": "REFUSE"'
+
+          # F2-T11a: revocation list sequence never moves backward.
+          out=$(python3 $EVAL $DS /tmp/runtime-last-revocation-9.json /tmp/replay-revocation.json $DP --drift-class image_digest_mismatch $FLAGS || true)
+          echo "$out" | grep -q '"action": "FAIL_STATIC"'
+
+          # F2-T11b: persisted quarantine survives an older-list replay.
+          out=$(python3 $EVAL $DS /tmp/runtime-persisted-quarantine.json /tmp/replay-revocation.json $DP --drift-class image_digest_mismatch $FLAGS || true)
+          echo "$out" | grep -q '"action": "QUARANTINE"'
+
           out=$(python3 $EVAL /tmp/expired.json $RT $RV $DP --drift-class image_digest_mismatch $FLAGS || true)
+          echo "$out" | grep -q '"action": "FAIL_STATIC"'
+
+          out=$(python3 $EVAL /tmp/future-issued.json $RT $RV $DP --drift-class image_digest_mismatch $FLAGS || true)
+          echo "$out" | grep -q '"action": "FAIL_STATIC"'
+
+          out=$(python3 $EVAL $DS /tmp/runtime-ntp-false.json $RV $DP --drift-class image_digest_mismatch $FLAGS || true)
           echo "$out" | grep -q '"action": "FAIL_STATIC"'
 
           out=$(python3 $EVAL $DS /tmp/runtime-flap.json $RV $DP --drift-class image_digest_mismatch $FLAGS || true)
@@ -146,6 +233,16 @@ jobs:
 
       - name: Validate chaos catalogue JSON
         run: python3 -m json.tool ksp-gitops/chaos/chaos-plan.json >/dev/null
+
+      - name: Validate Toxiproxy staging wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'staging_app:' ksp-gitops/chaos/docker-compose.chaos.yml
+          grep -q 'external: true' ksp-gitops/chaos/docker-compose.chaos.yml
+          grep -q '127.0.0.1:8474:8474' ksp-gitops/chaos/docker-compose.chaos.yml
+          grep -q '/srv/ksp-staging-data' ksp-gitops/chaos/chaos-plan.json
+          grep -q 'no promotion in progress' ksp-gitops/chaos/chaos-plan.json
 
       - name: Validate Compose exposure policy
         run: python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py ksp-gitops/chaos/docker-compose.chaos.yml
