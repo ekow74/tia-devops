@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
 """Fail closed on destructive Terraform changes to protected resources.
 
-Protection identity is optional_module_path.type.name. count/for_each indexes in the
-human display address are deliberately ignored. `forget` is destructive review too.
+Protection identity is optional_module_path.type.name. Instance keys in either the
+resource display address or module_address are deliberately ignored. `forget` is
+classified as destructive too.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 REINSTALL_SENSITIVE = {"image_id", "ssh_keys", "default_user", "user_data"}
+MODULE_INSTANCE_RE = re.compile(r"\[(?:\d+|\"(?:[^\"\\]|\\.)*\")\]")
+
+
+def normalize_module_address(value: str) -> str:
+    return MODULE_INSTANCE_RE.sub("", value.strip())
 
 
 def identity(resource: dict) -> str:
     rtype = str(resource.get("type", "")).strip()
     name = str(resource.get("name", "")).strip()
-    module = str(resource.get("module_address", "")).strip()
+    module = normalize_module_address(str(resource.get("module_address", "")))
     if not rtype or not name:
         return ""
     base = f"{rtype}.{name}"
@@ -25,7 +32,7 @@ def identity(resource: dict) -> str:
 
 def is_protected(resource_identity: str, protected: set[str]) -> bool:
     for spec in protected:
-        spec = spec.strip()
+        spec = normalize_module_address(spec.strip()) if spec.strip().startswith("module.") else spec.strip()
         if not spec:
             continue
         if spec.startswith("module."):
