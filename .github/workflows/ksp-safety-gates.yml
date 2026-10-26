@@ -30,7 +30,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
-      # Deliberately no Contabo, HCP, deployment, registry, or production secrets.
       KSP_PR_PATH: untrusted
     steps:
       - name: Checkout full history
@@ -77,38 +76,28 @@ jobs:
           terraform {
             required_version = ">= 1.16.0, < 1.17.0"
           }
-
-          variable "instances" {
-            type = number
-          }
-
+          variable "instances" { type = number }
           resource "terraform_data" "ksp_prototype" {
             count = var.instances
             input = "indexed-witness"
           }
           HCL
-
           terraform -chdir="$work" init -backend=false -input=false >/dev/null
           terraform -chdir="$work" apply -auto-approve -input=false -var='instances=1' >/dev/null
           terraform -chdir="$work" plan -input=false -var='instances=0' -out=delete.tfplan >/dev/null
           terraform -chdir="$work" show -json delete.tfplan >"$work/plan.json"
-
           python3 - "$work/plan.json" <<'PY'
           import json, sys
           plan=json.load(open(sys.argv[1], encoding='utf-8'))
           matches=[r for r in plan.get('resource_changes', []) if r.get('address') == 'terraform_data.ksp_prototype[0]']
-          if len(matches) != 1:
-              raise SystemExit(f'expected one indexed Terraform address, got {len(matches)}')
+          if len(matches) != 1: raise SystemExit(f'expected one indexed Terraform address, got {len(matches)}')
           r=matches[0]
           assert r.get('type') == 'terraform_data', r
           assert r.get('name') == 'ksp_prototype', r
           assert 'delete' in set((r.get('change') or {}).get('actions', [])), r
           print('A2-T06c terraform-show-json witness address:', r['address'])
           PY
-
-          if python3 ksp-bootstrap/scripts/ci/classify_tf_plan.py \
-              "$work/plan.json" \
-              ksp-bootstrap/tests/fixtures/terraform-plan/protected-witness.json; then
+          if python3 ksp-bootstrap/scripts/ci/classify_tf_plan.py "$work/plan.json" ksp-bootstrap/tests/fixtures/terraform-plan/protected-witness.json; then
             echo 'A2-T06c FAIL: destructive plan unexpectedly returned success' >&2
             exit 1
           else
@@ -120,23 +109,26 @@ jobs:
           fi
           echo 'A2-T06c-INDEXED: PASS real terraform show -json classified DESTRUCTIVE'
 
-      - name: Compose published-port policy - production paths
+      - name: Compose published-port and bypass policy - production paths
         shell: bash
         run: python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py
 
-      - name: Compose binding fixtures
+      - name: Compose binding and bypass fixtures
         shell: bash
         run: |
           python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py ksp-bootstrap/tests/fixtures/compose/safe.yaml
-          if python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py ksp-bootstrap/tests/fixtures/compose/unsafe.yaml; then
-            echo 'unsafe 0.0.0.0 fixture unexpectedly passed' >&2
-            exit 1
-          fi
-          if python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py ksp-bootstrap/tests/fixtures/compose/unsafe_unbound.yaml; then
-            echo 'unsafe unbound fixture unexpectedly passed' >&2
-            exit 1
-          fi
-          echo 'compose-policy-fixtures: PASS'
+          for unsafe in \
+            unsafe.yaml \
+            unsafe_unbound.yaml \
+            unsafe_host_network.yaml \
+            unsafe_privileged.yaml \
+            unsafe_docker_socket.yaml; do
+            if python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py "ksp-bootstrap/tests/fixtures/compose/$unsafe"; then
+              echo "unsafe Compose fixture unexpectedly passed: $unsafe" >&2
+              exit 1
+            fi
+          done
+          echo 'compose-policy-fixtures: PASS including host-network/privileged/socket bypasses'
 
       - name: Prove credential-free PR path
         shell: bash
