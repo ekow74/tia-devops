@@ -1,6 +1,8 @@
 {
-  "version": 1,
+  "version": 2,
   "flap_limit": 3,
+  "clock_skew_tolerance_seconds": 300,
+  "max_desired_state_validity_seconds": 172800,
   "classes": {
     "container_stopped": {
       "action": "AUTO_REPAIR",
@@ -20,7 +22,7 @@
     "running_pack_revoked": {
       "action": "QUARANTINE",
       "conditions": ["revocation_verified"],
-      "notes": "Revocation outranks desired state."
+      "notes": "Verified revocation outranks freeze, desired-state authority, expiry and flap controls."
     },
     "unknown_container": {
       "action": "ALERT_CONTAIN",
