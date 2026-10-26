@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "default_environment": "staging",
+  "production_allowed": false,
+  "experiments": [
+    {
+      "id": "C-DB-LATENCY",
+      "class": "dependency-network",
+      "target": "postgres",
+      "inject": "latency",
+      "steady_state": "API healthy before injection",
+      "hypothesis": "bounded database latency does not corrupt writes or trigger unbounded retries",
+      "success": [
+        "no data-integrity violations",
+        "worker retry budget respected",
+        "Governor does not widen permissions",
+        "service recovers after fault removal"
+      ]
+    },
+    {
+      "id": "C-WORKER-KILL",
+      "class": "container-lifecycle",
+      "target": "worker",
+      "inject": "terminate",
+      "steady_state": "worker queue healthy before injection",
+      "hypothesis": "a worker crash produces bounded recovery without duplicate side effects",
+      "success": [
+        "job resumes or safely fails",
+        "idempotency prevents duplicate external side effects",
+        "incident is observable",
+        "no safety gate is disabled"
+      ]
+    },
+    {
+      "id": "C-PACK-INTERRUPT",
+      "class": "knowledge-supply-chain",
+      "target": "knowledge-pack-fetch",
+      "inject": "mid-transfer interruption",
+      "steady_state": "current validated pack active",
+      "hypothesis": "an interrupted pack fetch never activates a partial candidate",
+      "success": [
+        "current pack remains active",
+        "candidate remains inactive",
+        "digest verification required before activation",
+        "retry is bounded"
+      ]
+    },
+    {
+      "id": "C-PACK-REVOKED",
+      "class": "knowledge-supply-chain",
+      "target": "candidate-pack",
+      "inject": "revoked digest",
+      "steady_state": "revocation list current",
+      "hypothesis": "a revoked pack cannot be activated or restored by rollback",
+      "success": [
+        "candidate rejected",
+        "previous non-revoked pack preserved",
+        "rollback eligibility check blocks revoked release",
+        "incident recorded"
+      ]
+    },
+    {
+      "id": "C-GIT-OUTAGE",
+      "class": "control-plane-dependency",
+      "target": "desired-state-repository",
+      "inject": "unavailable",
+      "steady_state": "approved release already active",
+      "hypothesis": "loss of Git connectivity does not stop the active release or trigger an unsafe fallback",
+      "success": [
+        "active release continues",
+        "no unverified deployment occurs",
+        "reconciliation resumes after recovery"
+      ]
+    },
+    {
+      "id": "C-GOVERNOR-RETRY-STORM",
+      "class": "autonomous-control",
+      "target": "Governor",
+      "inject": "repeated worker failures",
+      "steady_state": "normal orchestration",
+      "hypothesis": "the Governor remains inside retry, spend, permission and destructive-action boundaries",
+      "success": [
+        "bounded retries",
+        "no policy self-modification",
+        "no privilege expansion",
+        "no destructive Terraform apply",
+        "human/protected gate reached when no safe progress remains"
+      ]
+    }
+  ]
+}
