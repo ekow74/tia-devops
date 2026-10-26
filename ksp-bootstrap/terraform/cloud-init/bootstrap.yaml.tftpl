@@ -1,0 +1,30 @@
+#cloud-config
+package_update: true
+package_upgrade: false
+
+packages:
+  - ca-certificates
+  - curl
+  - python3
+  - python3-apt
+
+users:
+  - default
+  - name: kspdeploy
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    lock_passwd: true
+
+write_files:
+  - path: /etc/ksp-bootstrap-stage
+    owner: root:root
+    permissions: '0644'
+    content: |
+      CLOUD_INIT_BOOTSTRAP_ONLY
+      configuration_owner=ansible
+
+runcmd:
+  - [ sh, -c, "install -d -m 0755 /var/lib/ksp && date -u +%Y-%m-%dT%H:%M:%SZ > /var/lib/ksp/cloud-init-complete" ]
+
+final_message: "KSP minimal cloud-init bootstrap complete; handoff to Ansible required"
