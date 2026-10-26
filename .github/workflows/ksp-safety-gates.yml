@@ -109,6 +109,24 @@ jobs:
           fi
           echo 'A2-T06c-INDEXED: PASS real terraform show -json classified DESTRUCTIVE'
 
+      - name: A2-T06d for_each module-instance normalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          if python3 ksp-bootstrap/scripts/ci/classify_tf_plan.py \
+              ksp-bootstrap/tests/fixtures/terraform-plan/module-for-each-delete.json \
+              ksp-bootstrap/terraform/protected-resources.json; then
+            echo 'A2-T06d FAIL: for_each module delete unexpectedly returned success' >&2
+            exit 1
+          else
+            rc=$?
+            if [[ "$rc" -ne 42 ]]; then
+              echo "A2-T06d FAIL: classifier exit=$rc expected 42" >&2
+              exit 1
+            fi
+          fi
+          echo 'A2-T06d-FOR-EACH-MODULE: PASS normalized module.control_staging["blue"] to protected module identity'
+
       - name: Compose published-port and bypass policy - production paths
         shell: bash
         run: python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py
