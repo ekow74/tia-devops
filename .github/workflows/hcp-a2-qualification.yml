@@ -1,0 +1,53 @@
+name: KSP A2 HCP Workspace Safety Qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ksp-a2-hcp-staging
+  cancel-in-progress: false
+
+jobs:
+  hcp-workspace-policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: ksp-terraform-staging
+    env:
+      TFC_TOKEN: ${{ secrets.TFC_TOKEN }}
+      TFC_ORGANIZATION: ${{ vars.TFC_ORGANIZATION }}
+      TFC_WORKSPACE: ${{ vars.TFC_WORKSPACE }}
+    steps:
+      - name: Checkout accepted/protected code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require configured staging workspace identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$TFC_TOKEN"
+          test -n "$TFC_ORGANIZATION"
+          test -n "$TFC_WORKSPACE"
+
+      - name: A2-T07 HCP no-PR-run structural qualification
+        shell: bash
+        run: >-
+          python3 ksp-bootstrap/scripts/ci/verify_hcp_workspace_safety.py
+          --organization "$TFC_ORGANIZATION"
+          --workspace "$TFC_WORKSPACE"
+
+      - name: Evidence summary
+        shell: bash
+        run: |
+          {
+            echo '### A2 HCP staging workspace policy'
+            echo '- execution-mode: local'
+            echo '- VCS connection: none'
+            echo '- automatic speculative plans: disabled'
+            echo '- auto-apply: disabled'
+            echo '- PR workflows: credential-free only'
+          } >> "$GITHUB_STEP_SUMMARY"
