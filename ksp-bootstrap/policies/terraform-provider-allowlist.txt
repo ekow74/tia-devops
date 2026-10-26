@@ -1,0 +1,5 @@
+# Exact provider source addresses allowed in KSP production Terraform.
+contabo/contabo
+hashicorp/random
+hashicorp/tls
+hashicorp/null
