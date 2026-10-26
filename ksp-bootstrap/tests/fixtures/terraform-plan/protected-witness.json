@@ -1,0 +1,6 @@
+{
+  "identity_format": "optional_module_path.type.name",
+  "addresses": [
+    "terraform_data.ksp_prototype"
+  ]
+}
