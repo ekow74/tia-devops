@@ -39,13 +39,41 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Terraform static policy - no provider credentials
+      - name: Terraform static policy - production paths
         shell: bash
         run: python3 ksp-bootstrap/scripts/ci/check_terraform_static.py
 
-      - name: Compose published-port policy
+      - name: Terraform policy fixtures
+        shell: bash
+        run: |
+          python3 ksp-bootstrap/scripts/ci/check_terraform_static.py ksp-bootstrap/tests/fixtures/terraform/safe
+          if python3 ksp-bootstrap/scripts/ci/check_terraform_static.py ksp-bootstrap/tests/fixtures/terraform/unsafe_external; then
+            echo 'unsafe external-data fixture unexpectedly passed' >&2
+            exit 1
+          fi
+          if python3 ksp-bootstrap/scripts/ci/check_terraform_static.py ksp-bootstrap/tests/fixtures/terraform/unsafe_unpinned_module; then
+            echo 'unsafe unpinned-module fixture unexpectedly passed' >&2
+            exit 1
+          fi
+          echo 'terraform-policy-fixtures: PASS'
+
+      - name: Compose published-port policy - production paths
         shell: bash
         run: python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py
+
+      - name: Compose binding fixtures
+        shell: bash
+        run: |
+          python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py ksp-bootstrap/tests/fixtures/compose/safe.yaml
+          if python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py ksp-bootstrap/tests/fixtures/compose/unsafe.yaml; then
+            echo 'unsafe 0.0.0.0 fixture unexpectedly passed' >&2
+            exit 1
+          fi
+          if python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py ksp-bootstrap/tests/fixtures/compose/unsafe_unbound.yaml; then
+            echo 'unsafe unbound fixture unexpectedly passed' >&2
+            exit 1
+          fi
+          echo 'compose-policy-fixtures: PASS'
 
       - name: Prove credential-free PR path
         shell: bash
