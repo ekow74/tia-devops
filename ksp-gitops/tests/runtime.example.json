@@ -4,5 +4,6 @@
   "last_seen_revocation_sequence": 8,
   "consecutive_failed_applies": 0,
   "ntp_synchronized": true,
-  "active_digests": []
+  "active_digests": [],
+  "quarantined_digests": []
 }
