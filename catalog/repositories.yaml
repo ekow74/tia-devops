@@ -1,0 +1,135 @@
+schema_version: 1
+umbrella: ksp-devops
+owner: ekow74
+audited_on: 2026-10-26
+audit_scope:
+  - repository inventory and metadata
+  - top-level structure/readme sampling
+  - basic credential-signature search
+  - CI/CD and infrastructure relevance classification
+policy:
+  production_dependency_allowed: false
+  extraction_requires_review: true
+  preserve_git_history: true
+  canonical_ksp_repo: ksp-platform
+repositories:
+  - name: ansible-for-devops
+    lifecycle: candidate-extract
+    domain: ansible
+    disposition: extract selected automation patterns only after provenance, license, secret, and version review
+  - name: aws-eks-kubernetes-masterclass
+    lifecycle: reference
+    domain: aws-eks-kubernetes
+    disposition: training/reference; do not import wholesale
+  - name: Chaos-Monkey
+    lifecycle: reference
+    domain: reliability-chaos
+    disposition: retain as reliability reference; reimplement any KSP chaos tests against current tooling
+  - name: cheat-sheet-pdf
+    lifecycle: archive
+    domain: documentation
+    disposition: static reference material; exclude from build graph
+  - name: cka-study-guide
+    lifecycle: archive
+    domain: kubernetes-certification
+    disposition: certification reference only
+  - name: ckad-study-guide
+    lifecycle: archive
+    domain: kubernetes-certification
+    disposition: certification reference only
+  - name: devops-aws-linux-training
+    lifecycle: reference
+    domain: devops-training
+    disposition: broad training corpus; overlaps with tia-devops; preserve but do not treat as production source
+  - name: devops-exercises
+    lifecycle: archive
+    domain: devops-training
+    disposition: exercises/question material; exclude from production dependency graph
+  - name: devtraining-needit-utah
+    lifecycle: archive
+    domain: servicenow-training
+    disposition: unrelated to KSP runtime; preserve separately
+  - name: dgkanatsios-CKAD-exercises
+    lifecycle: archive
+    domain: kubernetes-certification
+    disposition: third-party certification exercises/reference
+  - name: docker-fundamentals
+    lifecycle: reference
+    domain: docker
+    disposition: training/reference; extract no code without review
+  - name: Docker_for_DevOps
+    lifecycle: reference
+    domain: docker
+    disposition: training/reference; compare useful patterns against current container standards
+  - name: freelance_and_job_support_projects
+    lifecycle: candidate-extract
+    domain: multi-cloud-iac-operations
+    disposition: high-value examples including Terraform, Kubernetes, cloud security and operations; quarantine for deep secret/provenance/security review before selective extraction
+  - name: k8-community
+    lifecycle: archive
+    domain: kubernetes-community
+    disposition: large community/reference snapshot; not a KSP dependency
+  - name: kubernetes-doc-pdf
+    lifecycle: archive
+    domain: kubernetes-documentation
+    disposition: static documentation only
+  - name: kubernetes-fundamentals
+    lifecycle: reference
+    domain: kubernetes
+    disposition: fundamentals/training reference
+  - name: Kubernetes_Devops
+    lifecycle: reference
+    domain: kubernetes-devops
+    disposition: legacy Kubernetes/DevOps material; use for comparison only
+  - name: labs
+    lifecycle: archive
+    domain: training-labs
+    disposition: large general lab repository; preserve history and keep out of KSP runtime
+  - name: learn-to-cloud
+    lifecycle: archive
+    domain: cloud-learning
+    disposition: learning-path/reference material
+  - name: maven-project
+    lifecycle: reference
+    domain: build-ci
+    disposition: legacy Java/Maven build example; KSP should use its own current build pipeline
+  - name: project01
+    lifecycle: reference
+    domain: containers-demo
+    disposition: Docker/Redis/WordPress/Yarn lab material; useful only as containerization reference
+  - name: SESSION-01-DEVELOPMENT
+    lifecycle: candidate-extract
+    domain: jenkins-containers-demo
+    disposition: contains Jenkins pipeline examples and Yelb demo material; extract pipeline concepts only, not third-party application code
+  - name: simple-bash-scripts
+    lifecycle: candidate-extract
+    domain: shell-automation
+    disposition: review small scripts for reusable operational helpers; rewrite to KSP standards with tests and shell linting
+  - name: source_code
+    lifecycle: candidate-extract
+    domain: jenkins
+    disposition: Jenkins job examples; use as legacy CI reference and extract concepts only
+  - name: terraform-beginner-to-advanced-resource
+    lifecycle: reference
+    domain: terraform
+    disposition: course-structured Terraform examples; use as learning/reference material, not production modules
+  - name: terroform-s2-session
+    lifecycle: reference
+    domain: terraform
+    disposition: legacy Terraform session material; retain despite typoed repository name
+  - name: tia-devops
+    lifecycle: reference
+    domain: devops-training-umbrella
+    disposition: control/index umbrella plus legacy broad training content; not KSP production source
+  - name: vikram_youtube
+    lifecycle: reference
+    domain: devops-training
+    disposition: AWS/Docker/Helm/Istio/Kubernetes/Linux/Maven/YAML training material; use for comparison only
+  - name: WalidShaari-Kubernetes-Certified-Administrator
+    lifecycle: archive
+    domain: kubernetes-certification
+    disposition: third-party CKA reference
+  - name: zeal-vora-certified-kubernetes-administrator
+    lifecycle: archive
+    domain: kubernetes-certification
+    disposition: third-party CKA reference
