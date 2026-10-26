@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PUBLIC_IF={{ ksp_public_interface | quote }}
+[[ -n "$PUBLIC_IF" ]] || { echo 'ksp-docker-firewall: public interface is empty' >&2; exit 64; }
+ip link show "$PUBLIC_IF" >/dev/null 2>&1 || { echo "ksp-docker-firewall: interface not found: $PUBLIC_IF" >&2; exit 65; }
+
+apply_family() {
+  local cmd=$1
+  shift
+  command -v "$cmd" >/dev/null 2>&1 || { echo "ksp-docker-firewall: missing $cmd" >&2; return 66; }
+
+  "$cmd" -nL DOCKER-USER >/dev/null 2>&1 || "$cmd" -N DOCKER-USER
+
+  # Remove only KSP-owned rules so reruns are deterministic without disturbing Docker/other policy.
+  while "$cmd" -C DOCKER-USER -i "$PUBLIC_IF" -m comment --comment KSP_DOCKER_PUBLIC_DROP -j DROP >/dev/null 2>&1; do
+    "$cmd" -D DOCKER-USER -i "$PUBLIC_IF" -m comment --comment KSP_DOCKER_PUBLIC_DROP -j DROP
+  done
+  while "$cmd" -C DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment KSP_DOCKER_ESTABLISHED -j ACCEPT >/dev/null 2>&1; do
+    "$cmd" -D DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment KSP_DOCKER_ESTABLISHED -j ACCEPT
+  done
+
+  # Clean prior CIDR-specific KSP allow rules by comment from the chain's line numbers, highest first.
+  mapfile -t owned_lines < <("$cmd" -nL DOCKER-USER --line-numbers 2>/dev/null | awk '/KSP_DOCKER_ALLOW_/ {print $1}' | sort -rn)
+  for n in "${owned_lines[@]:-}"; do
+    [[ -n "$n" ]] && "$cmd" -D DOCKER-USER "$n"
+  done
+
+  "$cmd" -I DOCKER-USER 1 -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment KSP_DOCKER_ESTABLISHED -j ACCEPT
+
+  local cidr
+  for cidr in "$@"; do
+    [[ -n "$cidr" ]] || continue
+    safe_comment=$(printf '%s' "$cidr" | tr ':./' '___')
+    "$cmd" -I DOCKER-USER 2 -i "$PUBLIC_IF" -s "$cidr" -m comment --comment "KSP_DOCKER_ALLOW_${safe_comment}" -j ACCEPT
+  done
+
+  "$cmd" -A DOCKER-USER -i "$PUBLIC_IF" -m comment --comment KSP_DOCKER_PUBLIC_DROP -j DROP
+}
+
+apply_family iptables{% for cidr in ksp_allowed_docker_ingress_v4 %} {{ cidr | quote }}{% endfor %}
+{% if ksp_manage_ipv6_docker_user | bool %}
+apply_family ip6tables{% for cidr in ksp_allowed_docker_ingress_v6 %} {{ cidr | quote }}{% endfor %}
+{% endif %}
+
+echo 'ksp-docker-firewall: PASS'
