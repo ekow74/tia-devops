@@ -1,22 +1,23 @@
 {
-  "version": 2,
+  "version": 3,
   "default_environment": "staging",
   "production_allowed": false,
-  "run_policy": "Run when SoftwareSet/reconciler changes; PackSet-only releases do not require the infrastructure chaos suite.",
+  "run_policy": "Run when SoftwareSet/reconciler changes; PackSet-only releases do not require the infrastructure chaos suite. Never run while a promotion is in progress.",
   "experiments": [
     {
       "id": "C-DB-OUTAGE",
       "mandatory_before_first_production": true,
       "class": "dependency-network",
-      "target": "postgres",
+      "target": "postgres-via-toxiproxy-on-staging-app-network",
       "inject": "outage/timeout",
-      "steady_state": "API and worker healthy before injection",
+      "steady_state": "API and worker healthy before injection; staging connection strings point to proxy listener",
       "hypothesis": "database failure does not corrupt writes or trigger unbounded retries",
       "success": [
+        "toxic is applied end-to-end through Toxiproxy",
+        "API observes the outage",
         "no data-integrity violations",
         "worker retry budget respected",
-        "no gate or permission is weakened",
-        "service recovers safely after fault removal"
+        "service recovers safely after toxic removal"
       ]
     },
     {
@@ -59,7 +60,7 @@
       "hypothesis": "a revoked digest cannot be activated, restored by rollback, or re-applied by reconciliation",
       "success": [
         "candidate rejected",
-        "running revoked content quarantined",
+        "running revoked content quarantined even during freeze or desired-state signature failure",
         "rollback eligibility blocks revoked release",
         "reconciler refuses signed desired state that still names revoked digest"
       ]
@@ -83,12 +84,13 @@
       "id": "C-DISK-FULL",
       "mandatory_before_first_production": true,
       "class": "host-resource",
-      "target": "docker-and-postgres-volumes",
-      "inject": "fallocate filler file to safe threshold",
-      "steady_state": "sufficient disk headroom before injection",
-      "hypothesis": "disk exhaustion fails safely without corrupting active release or database state",
+      "target": "/srv/ksp-staging-data dedicated staging filesystem only",
+      "inject": "fallocate filler file to safe threshold on staging filesystem",
+      "steady_state": "staging Docker/PostgreSQL data is isolated from control-plane filesystem and sufficient headroom exists",
+      "hypothesis": "staging disk exhaustion fails safely without taking down control-plane state",
       "success": [
         "health failure is detected",
+        "promotion service, Governor and review ledger remain healthy",
         "no destructive cleanup or volume prune runs automatically",
         "last healthy release remains identifiable",
         "recovery after filler removal is clean"
@@ -98,14 +100,17 @@
       "id": "C-REBOOT-MID-DEPLOY",
       "mandatory_before_first_production": true,
       "class": "host-lifecycle",
-      "target": "control-staging-host",
+      "target": "shared control-staging-host",
       "inject": "reboot after pull and before activation",
-      "steady_state": "candidate images pulled but current release active",
-      "hypothesis": "host loss mid-deploy cannot leave a half-activated release",
+      "steady_state": "candidate images pulled but current release active; no promotion in progress",
+      "hypothesis": "host loss mid-deploy cannot leave a half-activated release or lose control-plane state",
       "success": [
         "boot resumes last healthy release or safely completes verified activation",
         "partial candidate is not exposed",
         "reconciler resumes idempotently",
+        "promotion service returns healthy with no key/state loss",
+        "Governor returns healthy",
+        "review ledger returns healthy with no state loss",
         "evidence records interrupted deployment"
       ]
     },
@@ -114,11 +119,12 @@
       "mandatory_before_first_production": true,
       "class": "host-time",
       "target": "reconciler-time-source",
-      "inject": "several-hours clock skew",
+      "inject": "several-hours slow and several-hours fast clock skew plus NTP-unsynchronized state",
       "steady_state": "NTP synchronized and signed desired state valid",
       "hypothesis": "time failure cannot silently bypass expiry/freshness controls",
       "success": [
         "NTP/time-health failure alerts",
+        "future-issued desired state beyond tolerance fails static",
         "expired state is never accepted as valid",
         "valid state is not silently rejected without alert",
         "current verified state remains fail-static"
