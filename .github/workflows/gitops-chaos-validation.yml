@@ -98,21 +98,18 @@ jobs:
           cosign generate-key-pair --output-key-prefix /tmp/promotion >/dev/null
           cosign generate-key-pair --output-key-prefix /tmp/build >/dev/null
 
-          # F1-T01: unsigned/tampered authority is refused.
           : >/tmp/unsigned.bundle
           if ksp-gitops/scripts/verify_promotion_signature.sh "$DS" /tmp/unsigned.bundle /tmp/promotion.pub; then
             echo 'F1-T01 failed: unsigned desired state accepted' >&2
             exit 1
           fi
 
-          # F1-T02: a build key cannot impersonate the promotion key.
           cosign sign-blob --yes --tlog-upload=false --key /tmp/build.key --bundle /tmp/build-as-promotion.bundle "$DS" >/dev/null
           if ksp-gitops/scripts/verify_promotion_signature.sh "$DS" /tmp/build-as-promotion.bundle /tmp/promotion.pub; then
             echo 'F1-T02 failed: build-key-signed desired state accepted' >&2
             exit 1
           fi
 
-          # F1-T03: correctly promotion-signed desired state is accepted.
           cosign sign-blob --yes --tlog-upload=false --key /tmp/promotion.key --bundle /tmp/promotion.bundle "$DS" >/dev/null
           ksp-gitops/scripts/verify_promotion_signature.sh "$DS" /tmp/promotion.bundle /tmp/promotion.pub
 
@@ -181,52 +178,58 @@ jobs:
           Path('/tmp/expired.json').write_text(json.dumps(d))
           PY
 
-          # Revoked desired/running content.
-          out=$(python3 $EVAL $DS $RT /tmp/revoked.json $DP --drift-class image_digest_mismatch $FLAGS || true)
+          out=$(python3 $EVAL $DS $RT /tmp/revoked.json $DP --drift-class image_digest_mismatch $FLAGS)
           echo "$out" | grep -q '"action": "QUARANTINE"'
 
-          # F2-T08: freeze never pins recalled running content.
-          out=$(python3 $EVAL $DS /tmp/runtime-revoked.json /tmp/revoked.json $DP --drift-class image_digest_mismatch $FLAGS --freeze-present --freeze-signature-verified || true)
+          out=$(python3 $EVAL $DS /tmp/runtime-revoked.json /tmp/revoked.json $DP --drift-class image_digest_mismatch $FLAGS --freeze-present --freeze-signature-verified)
           echo "$out" | grep -q '"action": "QUARANTINE"'
 
-          # F2-T09: bad desired-state authority never pins recalled running content.
-          out=$(python3 $EVAL $DS /tmp/runtime-revoked.json /tmp/revoked.json $DP --drift-class image_digest_mismatch --build-signature-verified --revocation-signature-verified --now 2026-10-26T21:30:00Z || true)
+          out=$(python3 $EVAL $DS /tmp/runtime-revoked.json /tmp/revoked.json $DP --drift-class image_digest_mismatch --build-signature-verified --revocation-signature-verified --now 2026-10-26T21:30:00Z)
           echo "$out" | grep -q '"action": "QUARANTINE"'
 
-          out=$(python3 $EVAL $DS $RT $RV $DP --drift-class image_digest_mismatch $FLAGS --freeze-present --freeze-signature-verified || true)
+          out=$(python3 $EVAL $DS $RT $RV $DP --drift-class image_digest_mismatch $FLAGS --freeze-present --freeze-signature-verified)
           echo "$out" | grep -q '"action": "FREEZE"'
 
-          out=$(python3 $EVAL $DS /tmp/runtime-lower.json $RV $DP --drift-class image_digest_mismatch $FLAGS || true)
+          if out=$(python3 $EVAL $DS /tmp/runtime-lower.json $RV $DP --drift-class image_digest_mismatch $FLAGS); then
+            echo 'lower target release unexpectedly accepted' >&2
+            exit 1
+          else
+            rc=$?
+            test "$rc" -eq 2
+          fi
           echo "$out" | grep -q '"action": "REFUSE"'
 
-          # F2-T10: older signed desired-state document is replay-protected.
-          out=$(python3 $EVAL /tmp/replay-desired.json /tmp/runtime-last-applied-43.json $RV $DP --drift-class image_digest_mismatch $FLAGS || true)
+          if out=$(python3 $EVAL /tmp/replay-desired.json /tmp/runtime-last-applied-43.json $RV $DP --drift-class image_digest_mismatch $FLAGS); then
+            echo 'replayed desired state unexpectedly accepted' >&2
+            exit 1
+          else
+            rc=$?
+            test "$rc" -eq 2
+          fi
           echo "$out" | grep -q '"action": "REFUSE"'
 
-          # F2-T11a: revocation list sequence never moves backward.
-          out=$(python3 $EVAL $DS /tmp/runtime-last-revocation-9.json /tmp/replay-revocation.json $DP --drift-class image_digest_mismatch $FLAGS || true)
+          out=$(python3 $EVAL $DS /tmp/runtime-last-revocation-9.json /tmp/replay-revocation.json $DP --drift-class image_digest_mismatch $FLAGS)
           echo "$out" | grep -q '"action": "FAIL_STATIC"'
 
-          # F2-T11b: persisted quarantine survives an older-list replay.
-          out=$(python3 $EVAL $DS /tmp/runtime-persisted-quarantine.json /tmp/replay-revocation.json $DP --drift-class image_digest_mismatch $FLAGS || true)
+          out=$(python3 $EVAL $DS /tmp/runtime-persisted-quarantine.json /tmp/replay-revocation.json $DP --drift-class image_digest_mismatch $FLAGS)
           echo "$out" | grep -q '"action": "QUARANTINE"'
 
-          out=$(python3 $EVAL /tmp/expired.json $RT $RV $DP --drift-class image_digest_mismatch $FLAGS || true)
+          out=$(python3 $EVAL /tmp/expired.json $RT $RV $DP --drift-class image_digest_mismatch $FLAGS)
           echo "$out" | grep -q '"action": "FAIL_STATIC"'
 
-          out=$(python3 $EVAL /tmp/future-issued.json $RT $RV $DP --drift-class image_digest_mismatch $FLAGS || true)
+          out=$(python3 $EVAL /tmp/future-issued.json $RT $RV $DP --drift-class image_digest_mismatch $FLAGS)
           echo "$out" | grep -q '"action": "FAIL_STATIC"'
 
-          out=$(python3 $EVAL $DS /tmp/runtime-ntp-false.json $RV $DP --drift-class image_digest_mismatch $FLAGS || true)
+          out=$(python3 $EVAL $DS /tmp/runtime-ntp-false.json $RV $DP --drift-class image_digest_mismatch $FLAGS)
           echo "$out" | grep -q '"action": "FAIL_STATIC"'
 
-          out=$(python3 $EVAL $DS /tmp/runtime-flap.json $RV $DP --drift-class image_digest_mismatch $FLAGS || true)
+          out=$(python3 $EVAL $DS /tmp/runtime-flap.json $RV $DP --drift-class image_digest_mismatch $FLAGS)
           echo "$out" | grep -q '"action": "STOP_ESCALATE"'
 
-          out=$(python3 $EVAL $DS $RT $RV $DP --drift-class image_digest_mismatch --promotion-signature-verified --build-signature-verified --now 2026-10-26T21:30:00Z || true)
+          out=$(python3 $EVAL $DS $RT $RV $DP --drift-class image_digest_mismatch --promotion-signature-verified --build-signature-verified --now 2026-10-26T21:30:00Z)
           echo "$out" | grep -q '"action": "FAIL_STATIC"'
 
-          out=$(python3 $EVAL $DS $RT $RV $DP --drift-class unknown_container $FLAGS || true)
+          out=$(python3 $EVAL $DS $RT $RV $DP --drift-class unknown_container $FLAGS)
           echo "$out" | grep -q '"action": "ALERT_CONTAIN"'
 
           echo 'F2 anti-reconciliation controls: PASS'
