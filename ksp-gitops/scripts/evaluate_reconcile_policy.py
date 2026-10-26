@@ -2,7 +2,7 @@
 """Evaluate KSP reconciliation policy without performing side effects.
 
 Safety order is deliberately asymmetric:
-1. verified revocation of *running* content outranks every other control;
+1. persisted/verified revocation of running content outranks every other control;
 2. revocation freshness is monotonic and fail-static;
 3. desired-state/build authority must verify;
 4. a valid freeze stops repair but never blocks quarantine;
@@ -66,7 +66,12 @@ def main() -> int:
         current_time = now_utc(args.now)
 
         running_digests = set(runtime.get("active_digests", []))
+        persisted_quarantine = set(runtime.get("quarantined_digests", []))
         revoked = set(revocations.get("revoked_digests", []))
+
+        # Persisted quarantine prevents an older signed revocation list from reviving known-bad content.
+        if running_digests & persisted_quarantine:
+            return emit("QUARANTINE", "running state intersects persisted quarantine memory")
 
         # m1: quarantine verified recalled running content before freeze or desired-state authority checks.
         if args.revocation_signature_verified and running_digests & revoked:
