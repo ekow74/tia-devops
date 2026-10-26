@@ -28,7 +28,7 @@ jobs:
   static-safety:
     name: Credential-free static safety gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 10
     env:
       # Deliberately no Contabo, HCP, deployment, registry, or production secrets.
       KSP_PR_PATH: untrusted
@@ -57,6 +57,16 @@ jobs:
           fi
           echo 'terraform-policy-fixtures: PASS'
 
+      - name: Install pinned Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+
+      - name: Terraform HCL formatting/syntax
+        shell: bash
+        run: terraform -chdir=ksp-bootstrap/terraform fmt -check -recursive
+
       - name: Compose published-port policy - production paths
         shell: bash
         run: python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py
@@ -78,10 +88,14 @@ jobs:
       - name: Prove credential-free PR path
         shell: bash
         run: |
-          test -z "${CONTABO_CLIENT_ID:-}"
-          test -z "${CONTABO_CLIENT_SECRET:-}"
+          test -z "${CNTB_OAUTH2_CLIENT_ID:-}"
+          test -z "${CNTB_OAUTH2_CLIENT_SECRET:-}"
+          test -z "${CNTB_OAUTH2_USER:-}"
+          test -z "${CNTB_OAUTH2_PASS:-}"
           test -z "${TFC_TOKEN:-}"
           test -z "${TF_TOKEN_app_terraform_io:-}"
+          test -z "${CONTABO_CLIENT_ID:-}"
+          test -z "${CONTABO_CLIENT_SECRET:-}"
           echo 'credential-free-pr-path: PASS'
 
       - name: Gate integrity / independent approval
