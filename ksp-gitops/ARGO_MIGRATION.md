@@ -8,39 +8,42 @@ Argo CD is a Kubernetes GitOps controller. Installing Kubernetes solely to obtai
 
 ## Trigger conditions for migration
 
-Evaluate k3s + Argo CD when at least several of these are true:
-- multiple production worker nodes;
-- independent autoscaling pools;
-- GPU/media workers;
-- frequent progressive/canary delivery needs;
-- multiple tenant/domain deployments;
-- multi-region or multi-cluster operation;
-- Compose reconciliation becomes a material operational bottleneck;
-- Kubernetes-native scheduling materially reduces cost or manual operations.
+Open a k3s + Argo CD architecture gate only when **at least two** of the following persist for more than one quarter:
+- production needs three or more nodes for capacity or availability;
+- zero-downtime deployment SLOs cannot be met with the Compose reconciler;
+- independent worker pools (for example GPU/media) require separate scaling;
+- three or more separate tenant/institution installations exist beyond staging and production;
+- reconciler defects or operational toil cause repeated incidents.
 
-## Interface preserved across migration
+Precondition: an explicit owner/budget exists for Kubernetes upgrades and recovery (managed Kubernetes or a second qualified operator).
 
-The following remain stable:
-- signed ReleaseManifest;
-- immutable image digests;
-- Pharmacology/Med-Surg/Bridge Knowledge Pack digests;
-- qualification bundle digest;
-- signed revocation list;
-- monotonic release sequence;
-- build-signing identity separated from promotion identity;
-- Git promotion PR as desired-state change;
-- rollback/recall eligibility policy.
+## Release authority is unchanged
 
-Only the reconciliation adapter changes:
+Argo CD never becomes KSP's clinical/release authority. The stable authority remains:
+- promotion-signed desired-state/channel pointer;
+- independently build-signed ReleaseManifest;
+- immutable image and Knowledge Pack digests;
+- qualification attestations;
+- signed monotonic revocation list;
+- rollback/recall eligibility policy;
+- build identity separated from promotion/recall identities.
+
+Git may transport Kubernetes manifests, but Git commit validity alone is insufficient. A future Kubernetes adapter must enforce the same signed-artifact/revocation policy through admission controls with pinned keys. Argo self-heal must obey the same freeze, revocation, expiry, sequence, flap and drift-class refusal rules used by the Compose reconciler.
+
+## Adapter-only migration
 
 Compose phase:
-  Git -> KSP reconciler -> Docker Compose
+  signed OCI desired state -> KSP host reconciler -> Docker Compose
 
 Kubernetes phase:
-  Git -> Argo CD -> k3s/Kubernetes
+  signed release authority -> admission/signature/revocation policy -> Argo CD sync adapter -> k3s/Kubernetes
 
-A future Argo Rollouts adapter may add canary/blue-green delivery, but it must not weaken clinical, rights, revocation, signature, or GateChange policy.
+The upstream release model and Knowledge Pack safety semantics do not change.
+
+Argo Rollouts is not justified now. Reconsider it only if runtime latency/error-rate regressions become a recurring deployment risk; it does not substitute for clinical K-gates or RN review.
+
+LitmusChaos remains deferred to the Kubernetes phase. Current Compose staging uses Toxiproxy plus guarded host-native Docker/tc/fallocate/reboot procedures.
 
 ## Current upstream baseline observed during design
 
-As of 2026-10-26, Argo CD 3.5.6 is the latest stable release while 3.6 is still in release-candidate status. No Argo version is pinned in the Compose phase; version selection occurs only when the Kubernetes migration gate is actually opened.
+As of 2026-10-26, Argo CD 3.5.6 was the latest stable release observed during the design review. No Argo version is pinned in the Compose phase; version selection occurs only when the Kubernetes migration gate is opened.
