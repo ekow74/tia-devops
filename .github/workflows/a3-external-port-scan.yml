@@ -1,0 +1,92 @@
+name: KSP A3 External Port Exposure Qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ksp-a3-external-port-scan-staging
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ksp-network-qualification-staging
+    env:
+      STAGING_PUBLIC_IPV4: ${{ vars.STAGING_PUBLIC_IPV4 }}
+      STAGING_PUBLIC_IPV6: ${{ vars.STAGING_PUBLIC_IPV6 }}
+      STAGING_IPV6_MODE: ${{ vars.STAGING_IPV6_MODE }}
+      EXPECTED_PUBLIC_TCP_PORTS_IPV4: ${{ vars.EXPECTED_PUBLIC_TCP_PORTS_IPV4 }}
+      EXPECTED_PUBLIC_TCP_PORTS_IPV6: ${{ vars.EXPECTED_PUBLIC_TCP_PORTS_IPV6 }}
+    steps:
+      - name: Checkout accepted qualification code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require explicit address-family posture
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$STAGING_PUBLIC_IPV4" || { echo 'STAGING_PUBLIC_IPV4 required' >&2; exit 1; }
+          case "$STAGING_IPV6_MODE" in
+            enabled)
+              test -n "$STAGING_PUBLIC_IPV6" || { echo 'IPv6 enabled but STAGING_PUBLIC_IPV6 missing' >&2; exit 1; }
+              ;;
+            disabled)
+              test -z "$STAGING_PUBLIC_IPV6" || { echo 'IPv6 disabled but address was supplied' >&2; exit 1; }
+              ;;
+            *)
+              echo 'STAGING_IPV6_MODE must be enabled or disabled' >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Install nmap
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nmap >/dev/null
+
+      - name: Scan all IPv4 TCP ports externally
+        shell: bash
+        run: |
+          set -euo pipefail
+          nmap -Pn -T4 --open --max-retries 2 --min-rate 2000 -p- -oG /tmp/ipv4.gnmap "$STAGING_PUBLIC_IPV4"
+          python3 ksp-bootstrap/scripts/ci/verify_nmap_open_ports.py \
+            /tmp/ipv4.gnmap \
+            --family ipv4 \
+            --expected "$EXPECTED_PUBLIC_TCP_PORTS_IPV4"
+
+      - name: Scan all IPv6 TCP ports externally
+        if: env.STAGING_IPV6_MODE == 'enabled'
+        shell: bash
+        run: |
+          set -euo pipefail
+          nmap -6 -Pn -T4 --open --max-retries 2 --min-rate 2000 -p- -oG /tmp/ipv6.gnmap "$STAGING_PUBLIC_IPV6"
+          python3 ksp-bootstrap/scripts/ci/verify_nmap_open_ports.py \
+            /tmp/ipv6.gnmap \
+            --family ipv6 \
+            --expected "$EXPECTED_PUBLIC_TCP_PORTS_IPV6"
+
+      - name: Record explicit IPv6-disabled evidence
+        if: env.STAGING_IPV6_MODE == 'disabled'
+        run: echo 'A3 IPv6 posture = disabled; no IPv6 address exists to scan.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Qualification summary
+        shell: bash
+        run: |
+          {
+            echo '### A3 external exposure qualification'
+            echo "- IPv4 target: ${STAGING_PUBLIC_IPV4}"
+            echo "- IPv4 expected open TCP ports: ${EXPECTED_PUBLIC_TCP_PORTS_IPV4:-<none>}"
+            echo "- IPv6 posture: ${STAGING_IPV6_MODE}"
+            if [[ "$STAGING_IPV6_MODE" == enabled ]]; then
+              echo "- IPv6 target: ${STAGING_PUBLIC_IPV6}"
+              echo "- IPv6 expected open TCP ports: ${EXPECTED_PUBLIC_TCP_PORTS_IPV6:-<none>}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

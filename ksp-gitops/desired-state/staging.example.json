@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "environment": "staging",
+  "sequence": 42,
+  "target_release_sequence": 42,
+  "issued_at": "2026-10-26T21:00:00Z",
+  "expires_at": "2026-10-27T21:00:00Z",
+  "release_manifest_ref": "ghcr.io/example/ksp-release-manifest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "release_manifest_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "software": {
+    "knowledge_api": "ghcr.io/example/ksp-knowledge-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "worker": "ghcr.io/example/ksp-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "reviewer_ui": "ghcr.io/example/ksp-reviewer-ui@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "knowledge": {
+    "pharmacology": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "medsurg": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "bridge": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "compiled_learner_bundle_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "qualification_bundle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "revocation_list_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "revocation_min_sequence": 8,
+  "db_schema": {
+    "min": 6,
+    "max": 6
+  },
+  "migration": {
+    "phase": "none",
+    "bundle_digest": null
+  },
+  "minimum_reconciler_version": "0.2.0",
+  "expected_open_ports": [443],
+  "rollback": null
+}

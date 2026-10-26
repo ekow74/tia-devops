@@ -1,0 +1,261 @@
+name: KSP Hybrid GitOps Resilience Candidate
+
+on:
+  pull_request:
+    paths:
+      - 'ksp-gitops/**'
+      - '.github/workflows/gitops-chaos-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ksp-gitops-chaos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate promotion-signed desired-state payload
+        run: >-
+          python3 ksp-gitops/scripts/verify_desired_state.py
+          ksp-gitops/desired-state/staging.example.json
+          --expected-environment staging
+          --current-reconciler-version 0.2.0
+          --current-db-schema 6
+          --now 2026-10-26T21:30:00Z
+
+      - name: Negative desired-state controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          src = Path('ksp-gitops/desired-state/staging.example.json')
+          base = json.loads(src.read_text())
+
+          d = json.loads(json.dumps(base))
+          d['software']['worker'] = 'ghcr.io/example/ksp-worker:latest'
+          Path('/tmp/unsafe-latest.json').write_text(json.dumps(d))
+
+          d = json.loads(json.dumps(base))
+          d['command'] = 'rm -rf /'
+          Path('/tmp/unsafe-command.json').write_text(json.dumps(d))
+
+          d = json.loads(json.dumps(base))
+          d['migration'] = {'phase': 'contract', 'bundle_digest': 'sha256:' + '9'*64}
+          Path('/tmp/unsafe-contract.json').write_text(json.dumps(d))
+
+          d = json.loads(json.dumps(base))
+          d['issued_at'] = '2026-10-27T04:00:00Z'
+          d['expires_at'] = '2026-10-28T04:00:00Z'
+          Path('/tmp/unsafe-future.json').write_text(json.dumps(d))
+          PY
+          for f in /tmp/unsafe-latest.json /tmp/unsafe-command.json /tmp/unsafe-contract.json; do
+            if python3 ksp-gitops/scripts/verify_desired_state.py "$f"; then
+              echo "unsafe desired state unexpectedly passed: $f" >&2
+              exit 1
+            fi
+          done
+          if python3 ksp-gitops/scripts/verify_desired_state.py /tmp/unsafe-future.json --now 2026-10-26T21:30:00Z; then
+            echo 'future-issued desired state unexpectedly passed' >&2
+            exit 1
+          fi
+          if python3 ksp-gitops/scripts/verify_desired_state.py ksp-gitops/desired-state/staging.example.json --expected-environment production; then
+            echo 'staging document unexpectedly passed production environment binding' >&2
+            exit 1
+          fi
+          echo 'desired-state-negative-controls: PASS'
+
+      - name: Install pinned Cosign
+        shell: bash
+        run: |
+          set -euo pipefail
+          source ksp-gitops/reconciler/tool-versions.env
+          go install "github.com/sigstore/cosign/v2/cmd/cosign@${COSIGN_VERSION}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: F1 real cryptographic authority tests
+        shell: bash
+        env:
+          COSIGN_PASSWORD: ksp-ci-ephemeral-only
+        run: |
+          set -euo pipefail
+          source ksp-gitops/reconciler/tool-versions.env
+          cosign version | grep -q "${COSIGN_VERSION#v}"
+          chmod +x ksp-gitops/scripts/verify_promotion_signature.sh ksp-gitops/scripts/verify_signed_desired_state.sh
+          DS=ksp-gitops/desired-state/staging.example.json
+
+          cosign generate-key-pair --output-key-prefix /tmp/promotion >/dev/null
+          cosign generate-key-pair --output-key-prefix /tmp/build >/dev/null
+
+          : >/tmp/unsigned.bundle
+          if ksp-gitops/scripts/verify_promotion_signature.sh "$DS" /tmp/unsigned.bundle /tmp/promotion.pub; then
+            echo 'F1-T01 failed: unsigned desired state accepted' >&2
+            exit 1
+          fi
+
+          cosign sign-blob --yes --tlog-upload=false --key /tmp/build.key --bundle /tmp/build-as-promotion.bundle "$DS" >/dev/null
+          if ksp-gitops/scripts/verify_promotion_signature.sh "$DS" /tmp/build-as-promotion.bundle /tmp/promotion.pub; then
+            echo 'F1-T02 failed: build-key-signed desired state accepted' >&2
+            exit 1
+          fi
+
+          cosign sign-blob --yes --tlog-upload=false --key /tmp/promotion.key --bundle /tmp/promotion.bundle "$DS" >/dev/null
+          ksp-gitops/scripts/verify_promotion_signature.sh "$DS" /tmp/promotion.bundle /tmp/promotion.pub
+
+          if grep -R -E 'git[[:space:]]+(clone|pull|fetch|checkout)' ksp-gitops/scripts ksp-gitops/reconciler; then
+            echo 'runtime trust path unexpectedly contains Git fetch/checkout command' >&2
+            exit 1
+          fi
+          echo 'F1 cryptographic controls: PASS'
+
+      - name: F2 anti-reconciliation policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          DS=ksp-gitops/desired-state/staging.example.json
+          RT=ksp-gitops/tests/runtime.example.json
+          RV=ksp-gitops/tests/revocations.example.json
+          DP=ksp-gitops/reconciler/drift-policy.json
+          EVAL=ksp-gitops/scripts/evaluate_reconcile_policy.py
+          FLAGS='--promotion-signature-verified --build-signature-verified --revocation-signature-verified --now 2026-10-26T21:30:00Z'
+
+          out=$(python3 $EVAL $DS $RT $RV $DP --drift-class image_digest_mismatch $FLAGS)
+          echo "$out" | grep -q '"action": "AUTO_REPAIR"'
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          ds=json.loads(Path('ksp-gitops/desired-state/staging.example.json').read_text())
+          rt=json.loads(Path('ksp-gitops/tests/runtime.example.json').read_text())
+          rv=json.loads(Path('ksp-gitops/tests/revocations.example.json').read_text())
+          pharm=ds['knowledge']['pharmacology']
+
+          r=json.loads(json.dumps(rv)); r['revoked_digests']=[pharm]
+          Path('/tmp/revoked.json').write_text(json.dumps(r))
+
+          x=json.loads(json.dumps(rt)); x['active_digests']=[pharm]
+          Path('/tmp/runtime-revoked.json').write_text(json.dumps(x))
+
+          x=json.loads(json.dumps(rt)); x['target_release_sequence']=43
+          Path('/tmp/runtime-lower.json').write_text(json.dumps(x))
+
+          x=json.loads(json.dumps(rt)); x['consecutive_failed_applies']=3
+          Path('/tmp/runtime-flap.json').write_text(json.dumps(x))
+
+          x=json.loads(json.dumps(rt)); x['last_applied_sequence']=43
+          Path('/tmp/runtime-last-applied-43.json').write_text(json.dumps(x))
+
+          x=json.loads(json.dumps(rt)); x['last_seen_revocation_sequence']=9
+          Path('/tmp/runtime-last-revocation-9.json').write_text(json.dumps(x))
+
+          x=json.loads(json.dumps(rt)); x['last_seen_revocation_sequence']=9; x['active_digests']=[pharm]; x['quarantined_digests']=[pharm]
+          Path('/tmp/runtime-persisted-quarantine.json').write_text(json.dumps(x))
+
+          x=json.loads(json.dumps(rt)); x['ntp_synchronized']=False
+          Path('/tmp/runtime-ntp-false.json').write_text(json.dumps(x))
+
+          d=json.loads(json.dumps(ds)); d['sequence']=41
+          Path('/tmp/replay-desired.json').write_text(json.dumps(d))
+
+          r=json.loads(json.dumps(rv)); r['sequence']=7
+          Path('/tmp/replay-revocation.json').write_text(json.dumps(r))
+
+          d=json.loads(json.dumps(ds)); d['issued_at']='2026-10-27T04:00:00Z'; d['expires_at']='2026-10-28T04:00:00Z'
+          Path('/tmp/future-issued.json').write_text(json.dumps(d))
+
+          d=json.loads(json.dumps(ds)); d['issued_at']='2026-10-24T00:00:00Z'; d['expires_at']='2026-10-25T00:00:00Z'
+          Path('/tmp/expired.json').write_text(json.dumps(d))
+          PY
+
+          out=$(python3 $EVAL $DS $RT /tmp/revoked.json $DP --drift-class image_digest_mismatch $FLAGS)
+          echo "$out" | grep -q '"action": "QUARANTINE"'
+
+          out=$(python3 $EVAL $DS /tmp/runtime-revoked.json /tmp/revoked.json $DP --drift-class image_digest_mismatch $FLAGS --freeze-present --freeze-signature-verified)
+          echo "$out" | grep -q '"action": "QUARANTINE"'
+
+          out=$(python3 $EVAL $DS /tmp/runtime-revoked.json /tmp/revoked.json $DP --drift-class image_digest_mismatch --build-signature-verified --revocation-signature-verified --now 2026-10-26T21:30:00Z)
+          echo "$out" | grep -q '"action": "QUARANTINE"'
+
+          out=$(python3 $EVAL $DS $RT $RV $DP --drift-class image_digest_mismatch $FLAGS --freeze-present --freeze-signature-verified)
+          echo "$out" | grep -q '"action": "FREEZE"'
+
+          if out=$(python3 $EVAL $DS /tmp/runtime-lower.json $RV $DP --drift-class image_digest_mismatch $FLAGS); then
+            echo 'lower target release unexpectedly accepted' >&2
+            exit 1
+          else
+            rc=$?
+            test "$rc" -eq 2
+          fi
+          echo "$out" | grep -q '"action": "REFUSE"'
+
+          if out=$(python3 $EVAL /tmp/replay-desired.json /tmp/runtime-last-applied-43.json $RV $DP --drift-class image_digest_mismatch $FLAGS); then
+            echo 'replayed desired state unexpectedly accepted' >&2
+            exit 1
+          else
+            rc=$?
+            test "$rc" -eq 2
+          fi
+          echo "$out" | grep -q '"action": "REFUSE"'
+
+          out=$(python3 $EVAL $DS /tmp/runtime-last-revocation-9.json /tmp/replay-revocation.json $DP --drift-class image_digest_mismatch $FLAGS)
+          echo "$out" | grep -q '"action": "FAIL_STATIC"'
+
+          out=$(python3 $EVAL $DS /tmp/runtime-persisted-quarantine.json /tmp/replay-revocation.json $DP --drift-class image_digest_mismatch $FLAGS)
+          echo "$out" | grep -q '"action": "QUARANTINE"'
+
+          out=$(python3 $EVAL /tmp/expired.json $RT $RV $DP --drift-class image_digest_mismatch $FLAGS)
+          echo "$out" | grep -q '"action": "FAIL_STATIC"'
+
+          out=$(python3 $EVAL /tmp/future-issued.json $RT $RV $DP --drift-class image_digest_mismatch $FLAGS)
+          echo "$out" | grep -q '"action": "FAIL_STATIC"'
+
+          out=$(python3 $EVAL $DS /tmp/runtime-ntp-false.json $RV $DP --drift-class image_digest_mismatch $FLAGS)
+          echo "$out" | grep -q '"action": "FAIL_STATIC"'
+
+          out=$(python3 $EVAL $DS /tmp/runtime-flap.json $RV $DP --drift-class image_digest_mismatch $FLAGS)
+          echo "$out" | grep -q '"action": "STOP_ESCALATE"'
+
+          out=$(python3 $EVAL $DS $RT $RV $DP --drift-class image_digest_mismatch --promotion-signature-verified --build-signature-verified --now 2026-10-26T21:30:00Z)
+          echo "$out" | grep -q '"action": "FAIL_STATIC"'
+
+          out=$(python3 $EVAL $DS $RT $RV $DP --drift-class unknown_container $FLAGS)
+          echo "$out" | grep -q '"action": "ALERT_CONTAIN"'
+
+          echo 'F2 anti-reconciliation controls: PASS'
+
+      - name: Validate chaos catalogue JSON
+        run: python3 -m json.tool ksp-gitops/chaos/chaos-plan.json >/dev/null
+
+      - name: Validate Toxiproxy staging wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'staging_app:' ksp-gitops/chaos/docker-compose.chaos.yml
+          grep -q 'external: true' ksp-gitops/chaos/docker-compose.chaos.yml
+          grep -q '127.0.0.1:8474:8474' ksp-gitops/chaos/docker-compose.chaos.yml
+          grep -q '/srv/ksp-staging-data' ksp-gitops/chaos/chaos-plan.json
+          grep -q 'no promotion in progress' ksp-gitops/chaos/chaos-plan.json
+
+      - name: Validate Compose exposure policy
+        run: python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py ksp-gitops/chaos/docker-compose.chaos.yml
+
+      - name: Prove chaos production refusal
+        shell: bash
+        run: |
+          chmod +x ksp-gitops/chaos/run_guarded_chaos.sh
+          if KSP_ENV=production CHAOS_AUTHORIZED=true ksp-gitops/chaos/run_guarded_chaos.sh toxiproxy-up; then
+            echo 'chaos guard unexpectedly permitted production' >&2
+            exit 1
+          fi
+          echo 'production-chaos-refusal: PASS'

@@ -1,0 +1,11 @@
+---
+# No default public interface: deployment must supply it explicitly.
+ksp_public_interface: ""
+
+# Empty ingress allowlists mean no new inbound forwarded traffic to containers
+# is permitted from the public interface. Established/related traffic remains allowed.
+ksp_allowed_docker_ingress_v4: []
+ksp_allowed_docker_ingress_v6: []
+
+# Docker Engine uses iptables/ip6tables compatibility tooling on Ubuntu.
+ksp_manage_ipv6_docker_user: true

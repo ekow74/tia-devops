@@ -1,0 +1,8 @@
+---
+- name: Harden KSP Docker ingress boundary
+  hosts: ksp_control_staging
+  become: true
+  gather_facts: true
+  serial: 1
+  roles:
+    - role: docker_firewall

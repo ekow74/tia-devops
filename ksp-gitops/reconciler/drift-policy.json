@@ -1,0 +1,58 @@
+{
+  "version": 2,
+  "flap_limit": 3,
+  "clock_skew_tolerance_seconds": 300,
+  "max_desired_state_validity_seconds": 172800,
+  "classes": {
+    "container_stopped": {
+      "action": "AUTO_REPAIR",
+      "conditions": ["full_verification_passed", "not_frozen", "not_revoked"],
+      "notes": "Restart with bounded backoff; escalate at flap limit."
+    },
+    "image_digest_mismatch": {
+      "action": "AUTO_REPAIR",
+      "conditions": ["full_verification_passed", "not_frozen", "not_revoked"],
+      "notes": "Repair only to the promotion-signed digest."
+    },
+    "compose_config_mismatch": {
+      "action": "AUTO_REPAIR",
+      "conditions": ["full_verification_passed", "not_frozen", "not_revoked"],
+      "notes": "Render from fixed template; document cannot contain commands or hooks."
+    },
+    "running_pack_revoked": {
+      "action": "QUARANTINE",
+      "conditions": ["revocation_verified"],
+      "notes": "Verified revocation outranks freeze, desired-state authority, expiry and flap controls."
+    },
+    "unknown_container": {
+      "action": "ALERT_CONTAIN",
+      "conditions": [],
+      "notes": "Do not delete; contain network exposure and preserve for investigation."
+    },
+    "unexpected_open_port": {
+      "action": "ALERT_CONTAIN",
+      "conditions": [],
+      "notes": "Do not delete evidence; contain exposure and alert."
+    },
+    "host_drift": {
+      "action": "REPORT_ONLY",
+      "conditions": [],
+      "notes": "Reconciler never mutates packages, users, sshd or firewall; controlled Ansible handles host repair."
+    },
+    "secret_drift": {
+      "action": "REPORT_ONLY",
+      "conditions": [],
+      "notes": "Never overwrite secrets from desired state."
+    },
+    "database_schema_or_data": {
+      "action": "FREEZE_DEPLOYS",
+      "conditions": [],
+      "notes": "Never auto-repair database schema/data."
+    },
+    "volume_drift": {
+      "action": "REPORT_ONLY",
+      "conditions": [],
+      "notes": "Never prune, delete, recreate or auto-repair volumes."
+    }
+  }
+}

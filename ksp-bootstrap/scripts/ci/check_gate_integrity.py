@@ -1,18 +1,28 @@
 #!/usr/bin/env python3
-"""Fail closed when a PR changes KSP safety gates without an approved GateChange record."""
+"""Fail closed at the protected-path merge boundary.
+
+A protected PR cannot authorize itself. Merge authorization must already exist on the
+protected base branch and must bind ONE GateChange ID + ONE review + the exact canonical
+protected-diff SHA-256. A live review attestation is also required before an approval
+can be consumed; this is supplied out-of-band by the Expert Review Gateway/Drive readback.
+"""
 from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 POLICY = ROOT / "ksp-bootstrap/policies/protected-paths.txt"
-GATE_DIR = ROOT / "ksp-bootstrap/governance/gate-changes"
+BASE_REVIEW_INDEX = "ksp-bootstrap/governance/review-index.json"
+BASE_GATE_PREFIX = "ksp-bootstrap/governance/gate-changes/"
 
 SUSPICIOUS_ADDITIONS = (
     "pytest.mark.skip",
@@ -23,6 +33,8 @@ SUSPICIOUS_ADDITIONS = (
     "|| true",
 )
 THRESHOLD_RE = re.compile(r"(?i)(threshold|minimum|min_|recall|coverage)[^0-9-]*(-?\d+(?:\.\d+)?)")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+AUTHORIZING_DECISIONS = {"APPROVED", "APPROVED_WITH_MINOR_CHANGES", "ACCEPTED", "RN_DECISION", "OWNER_DECISION"}
 
 
 def run(*args: str) -> str:
@@ -39,7 +51,7 @@ def protected(path: str) -> bool:
 
 def changed_files(base: str, head: str) -> list[tuple[str, str]]:
     out = run("git", "diff", "--name-status", f"{base}...{head}")
-    rows = []
+    rows: list[tuple[str, str]] = []
     for line in out.splitlines():
         parts = line.split("\t")
         if len(parts) >= 2:
@@ -47,35 +59,25 @@ def changed_files(base: str, head: str) -> list[tuple[str, str]]:
     return rows
 
 
-def approved_gate_changes(base: str, head: str) -> list[dict]:
-    records: list[dict] = []
-    for status, path in changed_files(base, head):
-        if not path.startswith("ksp-bootstrap/governance/gate-changes/") or not path.endswith(".json"):
-            continue
-        if status.startswith("D"):
-            continue
-        try:
-            data = json.loads((ROOT / path).read_text())
-        except Exception as exc:
-            raise SystemExit(f"Invalid GateChange record {path}: {exc}")
-        required = ["gate_change_id", "decision_log_id", "reason", "reviewer_kind", "review_status"]
-        missing = [k for k in required if not data.get(k)]
-        if missing:
-            raise SystemExit(f"GateChange {path} missing: {', '.join(missing)}")
-        if not re.fullmatch(r"D-\d{4}", data["decision_log_id"]):
-            raise SystemExit(f"GateChange {path}: decision_log_id must match D-####")
-        if data["review_status"] != "APPROVED":
-            raise SystemExit(f"GateChange {path}: review_status must be APPROVED")
-        if data["reviewer_kind"] not in {"CLAUDE", "RN", "OWNER"}:
-            raise SystemExit(f"GateChange {path}: reviewer_kind must be CLAUDE, RN, or OWNER")
-        records.append(data)
-    return records
+def git_show_json(ref: str, path: str) -> Any:
+    raw = run("git", "show", f"{ref}:{path}")
+    return json.loads(raw)
 
 
-def diff_text(base: str, head: str, paths: list[str]) -> str:
+def base_paths(ref: str, prefix: str) -> list[str]:
+    out = run("git", "ls-tree", "-r", "--name-only", ref)
+    return [p for p in out.splitlines() if p.startswith(prefix)]
+
+
+def canonical_protected_diff(base: str, head: str, paths: list[str]) -> tuple[str, str]:
     if not paths:
-        return ""
-    return run("git", "diff", "--unified=0", f"{base}...{head}", "--", *paths)
+        return "", hashlib.sha256(b"").hexdigest()
+    text = run(
+        "git", "diff", "--binary", "--full-index", "--no-color", "--no-ext-diff",
+        f"{base}...{head}", "--", *sorted(paths)
+    )
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return normalized, hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def threshold_decrease(diff: str) -> bool:
@@ -89,17 +91,104 @@ def threshold_decrease(diff: str) -> bool:
             continue
         item = (m.group(1).lower(), float(m.group(2)))
         (added if line.startswith("+") else removed).append(item)
-    for rk, rv in removed:
-        for ak, av in added:
-            if rk == ak and av < rv:
-                return True
-    return False
+    return any(rk == ak and av < rv for rk, rv in removed for ak, av in added)
+
+
+def load_base_authorizations(base: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    try:
+        review_index = git_show_json(base, BASE_REVIEW_INDEX)
+    except Exception:
+        review_index = {}
+    if not isinstance(review_index, dict):
+        raise ValueError("base-branch review index must be an object")
+
+    records: list[dict[str, Any]] = []
+    for path in base_paths(base, BASE_GATE_PREFIX):
+        if not path.endswith(".json"):
+            continue
+        try:
+            data = git_show_json(base, path)
+        except Exception as exc:
+            raise ValueError(f"invalid base GateChange {path}: {exc}") from exc
+        if isinstance(data, dict):
+            data = dict(data)
+            data["_path"] = path
+            records.append(data)
+    return review_index, records
+
+
+def bound_authorization(
+    review_index: dict[str, Any],
+    records: list[dict[str, Any]],
+    pr_hash: str,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    matches: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    review_use: dict[str, list[str]] = {}
+
+    for rec in records:
+        review_id = str(rec.get("review_id", ""))
+        gate_id = str(rec.get("gate_change_id", ""))
+        if review_id and gate_id and rec.get("review_status") == "APPROVED":
+            review_use.setdefault(review_id, []).append(gate_id)
+
+        if rec.get("review_status") != "APPROVED":
+            continue
+        if rec.get("merge_identity") != "ksp-gate-merge-bot":
+            continue
+        if rec.get("pr_content_sha256") != pr_hash:
+            continue
+        if not re.fullmatch(r"GC-[0-9]{4,}", gate_id):
+            continue
+        entry = review_index.get(review_id)
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("decision") not in AUTHORIZING_DECISIONS:
+            continue
+        # ME1: the independent approval itself must name this exact GateChange and hash.
+        if entry.get("gate_change_id") != gate_id:
+            continue
+        if entry.get("pr_content_sha256") != pr_hash:
+            continue
+        matches.append((rec, entry))
+
+    # A1-T05f: one approval can authorize at most one GateChange.
+    for review_id, gates in review_use.items():
+        if len(set(gates)) > 1:
+            raise ValueError(f"review approval reused by multiple GateChanges: {review_id}")
+
+    if len(matches) > 1:
+        raise ValueError("multiple GateChange approvals bind the same protected diff")
+    return matches[0] if matches else None
+
+
+def verify_live_attestation(path: Path, record: dict[str, Any], entry: dict[str, Any], pr_hash: str) -> None:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    expected = {
+        "gate_change_id": record["gate_change_id"],
+        "review_id": record["review_id"],
+        "pr_content_sha256": pr_hash,
+        "drive_file_id": entry.get("drive_file_id"),
+        "revision_id": entry.get("revision_id"),
+        "decision": entry.get("decision"),
+    }
+    for key, value in expected.items():
+        if data.get(key) != value:
+            raise ValueError(f"live review attestation mismatch for {key}")
+    if data.get("authority") not in {"CLAUDE_DRIVE", "DECISION_LOG"}:
+        raise ValueError("live review attestation authority is not trusted")
+    if data.get("verified") is not True:
+        raise ValueError("live review attestation is not verified")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", required=True)
     ap.add_argument("--head", default="HEAD")
+    ap.add_argument(
+        "--live-review-attestation",
+        type=Path,
+        default=Path(os.environ["KSP_LIVE_REVIEW_ATTESTATION_FILE"]) if os.environ.get("KSP_LIVE_REVIEW_ATTESTATION_FILE") else None,
+    )
     ns = ap.parse_args()
 
     changes = changed_files(ns.base, ns.head)
@@ -108,13 +197,18 @@ def main() -> int:
         print("gate-integrity: PASS (no protected paths changed)")
         return 0
 
-    records = approved_gate_changes(ns.base, ns.head)
-    protected_paths = [p for _, p in protected_changes if not p.startswith("ksp-bootstrap/governance/gate-changes/")]
-    diff = diff_text(ns.base, ns.head, protected_paths)
+    changed_paths = {p for _, p in protected_changes}
+    approval_paths = {p for p in changed_paths if p == BASE_REVIEW_INDEX or p.startswith(BASE_GATE_PREFIX)}
+    substantive_paths = sorted(changed_paths - approval_paths)
 
+    # Same-PR review-index/GateChange approval cannot authorize substantive protected changes.
+    if approval_paths and substantive_paths:
+        print("gate-integrity: FAIL")
+        print(" - protected PR may not modify review-index/GateChange approval records alongside substantive protected changes")
+        return 1
+
+    diff, pr_hash = canonical_protected_diff(ns.base, ns.head, substantive_paths or sorted(changed_paths))
     reasons: list[str] = []
-    if not records:
-        reasons.append("protected path changed without an APPROVED GateChange record")
     if any(s.startswith("D") for s, _ in protected_changes):
         reasons.append("protected file deleted")
     additions = [line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++")]
@@ -123,21 +217,42 @@ def main() -> int:
     if threshold_decrease(diff):
         reasons.append("numeric safety threshold appears to decrease")
 
-    # GateChange is the only documented exception for protected changes.
-    if reasons and not records:
+    try:
+        review_index, records = load_base_authorizations(ns.base)
+        auth = bound_authorization(review_index, records, pr_hash)
+    except (ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:
         print("gate-integrity: FAIL")
+        print(f" - authorization validation error: {exc}")
+        return 1
+
+    if auth is None:
+        print("gate-integrity: FAIL")
+        print(" - protected diff has no base-branch GateChange approval bound to its exact SHA-256")
+        print(f" - required_pr_content_sha256={pr_hash}")
         for r in reasons:
             print(f" - {r}")
         return 1
 
-    if records:
-        print(f"gate-integrity: PASS with {len(records)} approved GateChange record(s)")
-        for r in reasons:
-            print(f" - approved exception: {r}")
-        return 0
+    record, entry = auth
+    if ns.live_review_attestation is None:
+        print("gate-integrity: FAIL")
+        print(" - bound approval exists but live authoritative review attestation is required")
+        print(f" - gate_change_id={record['gate_change_id']} review_id={record['review_id']}")
+        return 1
+    try:
+        verify_live_attestation(ns.live_review_attestation, record, entry, pr_hash)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print("gate-integrity: FAIL")
+        print(f" - live review verification failed: {exc}")
+        return 1
 
-    print("gate-integrity: FAIL (unclassified protected change)")
-    return 1
+    print(
+        "gate-integrity: PASS "
+        f"gate_change_id={record['gate_change_id']} review_id={record['review_id']} pr_content_sha256={pr_hash}"
+    )
+    for r in reasons:
+        print(f" - independently approved exception: {r}")
+    return 0
 
 
 if __name__ == "__main__":
