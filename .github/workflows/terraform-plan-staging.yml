@@ -1,0 +1,171 @@
+name: KSP Accepted-Main Terraform Plan — Staging
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ksp-bootstrap/terraform/**'
+      - 'ksp-bootstrap/scripts/ci/classify_tf_plan.py'
+      - 'ksp-bootstrap/scripts/ci/verify_hcp_workspace_safety.py'
+      - '.github/workflows/terraform-plan-staging.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ksp-terraform-plan-staging
+  cancel-in-progress: false
+
+jobs:
+  hcp-policy:
+    name: HCP safety readback before cloud credentials
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: ksp-terraform-staging
+    env:
+      TFC_TOKEN: ${{ secrets.TFC_TOKEN }}
+      TFC_ORGANIZATION: ${{ vars.TFC_ORGANIZATION }}
+      TFC_WORKSPACE: ${{ vars.TFC_WORKSPACE }}
+    steps:
+      - name: Checkout accepted code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify credentialed HCP workspace cannot run PR code
+        shell: bash
+        run: >-
+          python3 ksp-bootstrap/scripts/ci/verify_hcp_workspace_safety.py
+          --organization "$TFC_ORGANIZATION"
+          --workspace "$TFC_WORKSPACE"
+
+  plan:
+    name: Accepted-main plan only — never apply
+    needs: [hcp-policy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ksp-terraform-staging
+    env:
+      # HCP state/auth. The token is supplied only through environment variables;
+      # it is never written into backend config or plan files.
+      TFC_TOKEN: ${{ secrets.TFC_TOKEN }}
+      TF_TOKEN_app_terraform_io: ${{ secrets.TFC_TOKEN }}
+      TFC_ORGANIZATION: ${{ vars.TFC_ORGANIZATION }}
+      TFC_WORKSPACE: ${{ vars.TFC_WORKSPACE }}
+
+      # Contabo provider credentials are unavailable to pull_request workflows and
+      # become visible only after the HCP policy job passes.
+      CNTB_OAUTH2_CLIENT_ID: ${{ secrets.CNTB_OAUTH2_CLIENT_ID }}
+      CNTB_OAUTH2_CLIENT_SECRET: ${{ secrets.CNTB_OAUTH2_CLIENT_SECRET }}
+      CNTB_OAUTH2_USER: ${{ secrets.CNTB_OAUTH2_USER }}
+      CNTB_OAUTH2_PASS: ${{ secrets.CNTB_OAUTH2_PASS }}
+
+      TF_VAR_control_staging_product_id: ${{ vars.CONTROL_STAGING_PRODUCT_ID }}
+      TF_VAR_control_staging_region: ${{ vars.CONTROL_STAGING_REGION }}
+      TF_VAR_ubuntu_2404_image_id: ${{ vars.UBUNTU_2404_IMAGE_ID }}
+      TF_VAR_bootstrap_ssh_key_secret_ids: ${{ vars.BOOTSTRAP_SSH_KEY_SECRET_IDS_JSON }}
+      TF_VAR_deployment_authorized: 'true'
+    steps:
+      - name: Checkout accepted code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Re-verify HCP safety inside credentialed job
+        shell: bash
+        run: >-
+          python3 ksp-bootstrap/scripts/ci/verify_hcp_workspace_safety.py
+          --organization "$TFC_ORGANIZATION"
+          --workspace "$TFC_WORKSPACE"
+
+      - name: Require all credentialed-plan inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in \
+            TFC_TOKEN TFC_ORGANIZATION TFC_WORKSPACE \
+            CNTB_OAUTH2_CLIENT_ID CNTB_OAUTH2_CLIENT_SECRET CNTB_OAUTH2_USER CNTB_OAUTH2_PASS \
+            TF_VAR_control_staging_product_id TF_VAR_ubuntu_2404_image_id TF_VAR_bootstrap_ssh_key_secret_ids; do
+            test -n "${!name:-}" || { echo "missing required plan input: $name" >&2; exit 1; }
+          done
+
+      - name: Install pinned Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+
+      - name: Initialize HCP state in local execution mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >/tmp/ksp-staging.remote.tfbackend <<EOF
+          hostname     = "app.terraform.io"
+          organization = "${TFC_ORGANIZATION}"
+          workspaces { name = "${TFC_WORKSPACE}" }
+          EOF
+          terraform -chdir=ksp-bootstrap/terraform init \
+            -input=false \
+            -reconfigure \
+            -backend-config=/tmp/ksp-staging.remote.tfbackend
+          rm -f /tmp/ksp-staging.remote.tfbackend
+
+      - name: Validate configuration
+        run: terraform -chdir=ksp-bootstrap/terraform validate
+
+      - name: Create credentialed accepted-main plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=ksp-bootstrap/terraform plan \
+            -input=false \
+            -lock-timeout=5m \
+            -out=staging.tfplan
+          terraform -chdir=ksp-bootstrap/terraform show -json staging.tfplan > /tmp/staging-plan.json
+
+      - name: Refuse destructive protected-resource changes
+        shell: bash
+        run: >-
+          python3 ksp-bootstrap/scripts/ci/classify_tf_plan.py
+          /tmp/staging-plan.json
+          ksp-bootstrap/terraform/protected-resources.json
+
+      - name: Create non-secret plan evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ksp-plan-evidence
+          sha256sum /tmp/staging-plan.json > /tmp/ksp-plan-evidence/plan-json.sha256
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "repository=${GITHUB_REPOSITORY}"
+            echo "event=${GITHUB_EVENT_NAME}"
+            echo "workspace=${TFC_WORKSPACE}"
+            echo "organization=${TFC_ORGANIZATION}"
+            echo "terraform=1.16.6"
+            echo "apply_performed=false"
+            echo "hcp_execution_mode=local"
+            echo "hcp_vcs_connected=false"
+            echo "hcp_speculative_enabled=false"
+            echo "hcp_auto_apply=false"
+          } > /tmp/ksp-plan-evidence/qualification.txt
+          cp /tmp/staging-plan.json /tmp/ksp-plan-evidence/plan.json
+
+      - name: Upload immutable qualification evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ksp-staging-terraform-plan-${{ github.sha }}
+          path: /tmp/ksp-plan-evidence/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Explicit no-apply assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -nE 'terraform[[:space:]]+apply|auto-approve' .github/workflows/terraform-plan-staging.yml; then
+            echo 'accepted-main planning workflow contains an apply path' >&2
+            exit 1
+          fi
+          echo 'terraform-plan-only: PASS — no apply path exists in this workflow'
