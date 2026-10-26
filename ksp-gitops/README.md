@@ -1,100 +1,79 @@
-# KSP Hybrid GitOps + Resilience Candidate
+# KSP Hybrid GitOps + Resilience Baseline
 
-Status: S02 response candidate after Claude architecture review v1.0.
+Status: approved with minor implementation fold-ins by `KSP_Deployment_Architecture_Comparison_REVIEW_v2.0_2026-10-26`.
 Base: ksp-s02-cicd-security.
-Canonical direction: S02 Terraform + Ansible + two-VM Docker Compose, with a small timer-driven reconciler and staging resilience qualification. No Kubernetes/Argo CD yet.
+Canonical direction: Terraform + Ansible + two-VM Docker Compose, with a small host timer-driven reconciler and staging resilience qualification. No Kubernetes/Argo CD yet.
 
-## Single release authority (F1)
+## Single release authority
 
 Production does **not** trust Git as desired-state authority.
 
-1. The promotion service canonicalizes the desired-state JSON and signs it with the dedicated promotion key.
+1. The promotion service canonicalizes desired-state JSON and signs it with the dedicated promotion key.
 2. The signed desired-state document is published as an OCI artifact/channel pointer.
-3. The production reconciler fetches that OCI document, verifies its promotion signature against the pinned promotion public key, and independently verifies the referenced ReleaseManifest under the pinned build public key.
-4. Git may receive a copy for audit/diff/history only. The reconciler never reads Git and production holds no Git credential.
-5. A build signature alone cannot authorize production.
-6. The Governor may request promotion but cannot read the promotion key or write an authoritative desired-state document.
+3. The production reconciler verifies that promotion signature, then independently verifies the referenced ReleaseManifest under the pinned build key.
+4. Git is optional audit/diff/history only. Production has no Git credential and the runtime trust path never reads Git.
+5. A build key cannot authorize production desired state.
+6. Private project-key signing uses no public Rekor upload; Cosign verification explicitly uses the matching no-public-tlog posture. Freshness is enforced by signed timestamps plus monotonic host state.
 
-Runtime authority flow:
+Runtime authority:
 
 promotion service -> promotion-signed desired-state OCI artifact -> host reconciler -> Docker Compose
 
-Audit-only mirror:
+## Anti-reconciliation / recall safety
 
-promotion service -> Git mirror (optional; never read by production)
+The reconciler is deliberately asymmetric.
 
-## Anti-reconciliation controls (F2)
-
-Every reconcile cycle performs these refusal checks before any repair:
-
-1. Verify promotion signature and ReleaseManifest build signature.
-2. Verify current signed revocation list and require its monotonic sequence to meet `revocation_min_sequence`.
-3. Revocation outranks desired state. Revoked desired/running digests are quarantined, never re-applied.
-4. A valid local signed freeze marker stops all repair actions even when the desired state remains valid.
-5. Channel `sequence` only increases. Moving the target release backwards requires a separately verified rollback record that passed rollback-eligibility policy.
-6. Expired desired state is not applied. The current verified release remains active unless it is revoked.
-7. Registry/signature/revocation-source outage is fail-static: keep current verified state and alert; never use unverified/tag fallback.
-8. Three consecutive failed applies of one state reaches the flap limit: stop applying and escalate.
-9. Environment, database-schema compatibility, minimum reconciler version and expected-open-port policy are bound into the signed document.
-10. The desired-state schema has `additionalProperties: false`; it cannot carry hooks, commands, scripts or other executable content.
+1. Persisted or currently verified revocation of **running** content is checked first and returns `QUARANTINE`. This outranks freeze, desired-state signature failure, expiry and flap controls.
+2. Revocation sequence never moves backward. `last_seen_revocation_sequence` is persisted by the reconciler account; an older list fails static. Persisted `quarantined_digests` prevents replay from reviving previously recalled content.
+3. Promotion and ReleaseManifest build signatures must verify before normal reconciliation.
+4. A valid signed freeze stops repair, but **does not stop quarantine of recalled content**.
+5. `last_applied_sequence` is persisted; older desired-state documents are refused. A rollback uses a new channel sequence and a separately verified rollback record to target an older eligible release.
+6. NTP must be synchronized. `issued_at` more than 5 minutes in the future fails static. Desired-state validity is capped at 48 hours, and expired state is never applied.
+7. Authority/revocation transport failure is fail-static: keep the current verified non-revoked release and alert; never fall back to tags or lower sequences.
+8. Three failed applies of one state stops reconciliation and escalates.
+9. Environment, DB-schema compatibility, minimum reconciler version and expected ports are bound into the signed document.
+10. The desired-state schema is closed (`additionalProperties: false`) and carries no commands/hooks/scripts.
 
 ## Drift classes
 
-Only known-safe runtime drift is auto-repaired:
+Auto-repair is restricted to known-safe runtime drift:
+- stopped/crashed known container;
+- running image digest mismatch;
+- fixed-template, non-secret Compose configuration mismatch.
 
-- stopped/crashed known container: restart with backoff;
-- running image digest mismatch: repair to the promotion-signed digest after full verification;
-- Compose/non-secret configuration mismatch: render from fixed template and repair.
+Never auto-repaired:
+- revoked content -> quarantine;
+- unknown container / unexpected port -> alert + contain, preserve evidence;
+- host package/user/sshd/firewall drift -> report, controlled Ansible repair only;
+- secret drift -> report only;
+- database schema/data -> freeze deploys;
+- volumes -> report only, never prune/delete/recreate.
 
-Drift that is **not** automatically repaired:
+Policy: `ksp-gitops/reconciler/drift-policy.json`.
+Evaluator: `ksp-gitops/scripts/evaluate_reconcile_policy.py`.
 
-- revoked content: quarantine;
-- unknown container or unexpected open port: alert/contain, preserve evidence, do not delete;
-- host package/user/sshd/firewall drift: report; controlled Ansible handles host repair;
-- secrets: report only;
-- database schema/data: never auto-repair; freeze further deploys;
-- volumes: never prune/delete/recreate automatically.
+## Reconciler privilege boundary
 
-The executable mapping is `ksp-gitops/reconciler/drift-policy.json` and the side-effect-free evaluator is `ksp-gitops/scripts/evaluate_reconcile_policy.py`.
+Production reconciler is a dedicated host `systemd` service/timer, not an application container with Docker socket access. It is unavailable to the Governor and has no inbound API, Git/cloud/Terraform credentials, build capability or self-update path.
 
-## Reconciler privilege boundary (F3)
+Loop:
 
-The production reconciler is a small host `systemd` service/timer, not an application container with the Docker socket mounted. It runs under a dedicated account unavailable to the Governor.
+fetch signed OCI state -> verify promotion/build signatures -> verify revocation freshness/quarantine -> validate environment/sequence/time/DB/reconciler compatibility -> classify drift -> pull exact digests -> render fixed Compose template -> apply permitted repair -> health check -> persist evidence/counters.
 
-Smallest safe loop:
+## Resilience qualification
 
-fetch signed OCI document -> verify promotion/build signatures -> validate schema/environment/sequence/expiry/revocation/DB/reconciler compatibility -> evaluate drift class -> pull exact digests -> render fixed Compose template -> apply only permitted repairs -> health check -> write evidence.
-
-It never:
-
-- builds artifacts or pulls by tag;
-- runs contract-phase database migrations;
-- executes document-supplied commands/hooks;
-- runs `docker compose down -v` or prunes volumes;
-- edits host firewall/users/sshd/packages;
-- holds Terraform/cloud/Git-write credentials;
-- exposes an inbound control API;
-- self-updates outside a signed software release.
-
-## Resilience qualification (F4)
-
-Staging-only qualification includes:
-
-- PostgreSQL outage/timeout;
+Staging-only mandatory first-production experiments:
+- PostgreSQL outage through Toxiproxy wired to the staging application network;
 - side-effecting worker termination;
 - interrupted Knowledge Pack transfer;
 - revoked digest at activation, rollback and reconciliation;
 - signed OCI authority/revocation-source outage;
-- disk-full condition;
-- host reboot mid-deploy;
-- clock skew / NTP failure.
+- disk-full on `/srv/ksp-staging-data` **only**, isolated from control-plane storage;
+- shared-host reboot mid-deploy, including promotion service/Governor/review-ledger recovery;
+- several-hours slow/fast clock skew and NTP-unsynchronized state.
 
-Governor retry-storm testing is moved to Governor integration tests because it exercises budget/permission policy rather than infrastructure chaos.
-
-Toxiproxy remains acceptable for staging network/dependency faults. Pumba is not required; guarded `docker`/`tc`/`fallocate` host commands give us the needed tests with less privileged third-party surface.
+Chaos never runs while `/run/ksp-promotion-active` exists. Toxiproxy is retained; Pumba is not required. Governor retry-storm behavior belongs in integration tests, not infrastructure chaos.
 
 ## Argo CD boundary
 
-Argo CD, Argo Rollouts and LitmusChaos are deferred. A move to k3s/Kubernetes requires evidence that at least two scale/operational triggers persist (multi-node capacity/availability, independent worker pools, multiple installations, delivery SLO pressure, or repeated Compose-reconciler toil) and that cluster upgrades have an explicit operator/budget owner.
-
-A future Kubernetes migration replaces only the reconciliation adapter. The promotion-signed ReleaseManifest/desired-state authority, revocation semantics, Knowledge Pack digests and rollback eligibility remain unchanged.
+Argo CD, Argo Rollouts and LitmusChaos remain deferred. Reconsider k3s + Argo CD only when at least two evidence-based scale/operations triggers persist and Kubernetes upgrade/recovery ownership is funded. The release authority, revocation semantics, Knowledge Pack digests and rollback eligibility do not change; only the reconciliation adapter changes.
