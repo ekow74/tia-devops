@@ -1,26 +1,29 @@
 {
-  "version": 1,
+  "version": 2,
   "default_environment": "staging",
   "production_allowed": false,
+  "run_policy": "Run when SoftwareSet/reconciler changes; PackSet-only releases do not require the infrastructure chaos suite.",
   "experiments": [
     {
-      "id": "C-DB-LATENCY",
+      "id": "C-DB-OUTAGE",
+      "mandatory_before_first_production": true,
       "class": "dependency-network",
       "target": "postgres",
-      "inject": "latency",
-      "steady_state": "API healthy before injection",
-      "hypothesis": "bounded database latency does not corrupt writes or trigger unbounded retries",
+      "inject": "outage/timeout",
+      "steady_state": "API and worker healthy before injection",
+      "hypothesis": "database failure does not corrupt writes or trigger unbounded retries",
       "success": [
         "no data-integrity violations",
         "worker retry budget respected",
-        "Governor does not widen permissions",
-        "service recovers after fault removal"
+        "no gate or permission is weakened",
+        "service recovers safely after fault removal"
       ]
     },
     {
       "id": "C-WORKER-KILL",
+      "mandatory_before_first_production": true,
       "class": "container-lifecycle",
-      "target": "worker",
+      "target": "worker-with-external-side-effects",
       "inject": "terminate",
       "steady_state": "worker queue healthy before injection",
       "hypothesis": "a worker crash produces bounded recovery without duplicate side effects",
@@ -33,6 +36,7 @@
     },
     {
       "id": "C-PACK-INTERRUPT",
+      "mandatory_before_first_production": true,
       "class": "knowledge-supply-chain",
       "target": "knowledge-pack-fetch",
       "inject": "mid-transfer interruption",
@@ -41,51 +45,90 @@
       "success": [
         "current pack remains active",
         "candidate remains inactive",
-        "digest verification required before activation",
+        "digest verification is required before activation",
         "retry is bounded"
       ]
     },
     {
       "id": "C-PACK-REVOKED",
+      "mandatory_before_first_production": true,
       "class": "knowledge-supply-chain",
-      "target": "candidate-pack",
+      "target": "activation-rollback-reconcile",
       "inject": "revoked digest",
-      "steady_state": "revocation list current",
-      "hypothesis": "a revoked pack cannot be activated or restored by rollback",
+      "steady_state": "signed revocation list current",
+      "hypothesis": "a revoked digest cannot be activated, restored by rollback, or re-applied by reconciliation",
       "success": [
         "candidate rejected",
-        "previous non-revoked pack preserved",
-        "rollback eligibility check blocks revoked release",
-        "incident recorded"
+        "running revoked content quarantined",
+        "rollback eligibility blocks revoked release",
+        "reconciler refuses signed desired state that still names revoked digest"
       ]
     },
     {
-      "id": "C-GIT-OUTAGE",
+      "id": "C-AUTHORITY-OUTAGE",
+      "mandatory_before_first_production": true,
       "class": "control-plane-dependency",
-      "target": "desired-state-repository",
-      "inject": "unavailable",
-      "steady_state": "approved release already active",
-      "hypothesis": "loss of Git connectivity does not stop the active release or trigger an unsafe fallback",
+      "target": "signed-OCI-desired-state-and-revocation-source",
+      "inject": "registry unavailable",
+      "steady_state": "verified release already active",
+      "hypothesis": "loss of authority transport is fail-static and never causes an unverified fallback",
       "success": [
-        "active release continues",
-        "no unverified deployment occurs",
-        "reconciliation resumes after recovery"
+        "active verified release continues",
+        "no cached unverified desired state is applied",
+        "no lower sequence or tag fallback occurs",
+        "alert is raised"
       ]
     },
     {
-      "id": "C-GOVERNOR-RETRY-STORM",
-      "class": "autonomous-control",
-      "target": "Governor",
-      "inject": "repeated worker failures",
-      "steady_state": "normal orchestration",
-      "hypothesis": "the Governor remains inside retry, spend, permission and destructive-action boundaries",
+      "id": "C-DISK-FULL",
+      "mandatory_before_first_production": true,
+      "class": "host-resource",
+      "target": "docker-and-postgres-volumes",
+      "inject": "fallocate filler file to safe threshold",
+      "steady_state": "sufficient disk headroom before injection",
+      "hypothesis": "disk exhaustion fails safely without corrupting active release or database state",
       "success": [
-        "bounded retries",
-        "no policy self-modification",
-        "no privilege expansion",
-        "no destructive Terraform apply",
-        "human/protected gate reached when no safe progress remains"
+        "health failure is detected",
+        "no destructive cleanup or volume prune runs automatically",
+        "last healthy release remains identifiable",
+        "recovery after filler removal is clean"
       ]
+    },
+    {
+      "id": "C-REBOOT-MID-DEPLOY",
+      "mandatory_before_first_production": true,
+      "class": "host-lifecycle",
+      "target": "control-staging-host",
+      "inject": "reboot after pull and before activation",
+      "steady_state": "candidate images pulled but current release active",
+      "hypothesis": "host loss mid-deploy cannot leave a half-activated release",
+      "success": [
+        "boot resumes last healthy release or safely completes verified activation",
+        "partial candidate is not exposed",
+        "reconciler resumes idempotently",
+        "evidence records interrupted deployment"
+      ]
+    },
+    {
+      "id": "C-CLOCK-SKEW",
+      "mandatory_before_first_production": true,
+      "class": "host-time",
+      "target": "reconciler-time-source",
+      "inject": "several-hours clock skew",
+      "steady_state": "NTP synchronized and signed desired state valid",
+      "hypothesis": "time failure cannot silently bypass expiry/freshness controls",
+      "success": [
+        "NTP/time-health failure alerts",
+        "expired state is never accepted as valid",
+        "valid state is not silently rejected without alert",
+        "current verified state remains fail-static"
+      ]
+    }
+  ],
+  "moved_to_integration_tests": [
+    {
+      "id": "I-GOVERNOR-RETRY-STORM",
+      "reason": "Governor retry/spend/permission limits are control-plane integration properties, not infrastructure chaos."
     }
   ]
 }
