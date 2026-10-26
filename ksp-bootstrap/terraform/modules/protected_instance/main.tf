@@ -11,6 +11,11 @@ resource "contabo_instance" "this" {
   lifecycle {
     prevent_destroy = true
 
+    precondition {
+      condition     = var.deployment_authorized
+      error_message = "KSP deployment is frozen until A2/A3 qualification and trusted HCP authorization are complete."
+    }
+
     # Contabo documents that changing user_data or ssh_keys reinstalls the VM.
     # After bootstrap, Ansible owns host configuration and SSH authorized_keys.
     ignore_changes = [
