@@ -1,0 +1,7 @@
+# Example only. No credentials belong in tfvars or Git.
+# Resolve these account-specific identifiers before the trusted HCP plan.
+control_staging_product_id    = "REPLACE_WITH_QUALIFIED_CONTABO_PRODUCT_ID"
+control_staging_region        = "US-central"
+ubuntu_2404_image_id          = "REPLACE_WITH_VERIFIED_UBUNTU_2404_IMAGE_ID"
+bootstrap_ssh_key_secret_ids  = [123456]
+deployment_authorized         = false
