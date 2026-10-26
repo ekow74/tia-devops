@@ -1,0 +1,6 @@
+{
+  "identity_format": "optional_module_path.type.name",
+  "addresses": [
+    "module.control_staging.contabo_instance.this"
+  ]
+}
