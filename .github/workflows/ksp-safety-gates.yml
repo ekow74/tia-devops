@@ -106,15 +106,17 @@ jobs:
           print('A2-T06c terraform-show-json witness address:', r['address'])
           PY
 
-          set +e
-          python3 ksp-bootstrap/scripts/ci/classify_tf_plan.py \
-            "$work/plan.json" \
-            ksp-bootstrap/tests/fixtures/terraform-plan/protected-witness.json
-          rc=$?
-          set -e
-          if [[ "$rc" -ne 42 ]]; then
-            echo "A2-T06c FAIL: classifier exit=$rc expected 42" >&2
+          if python3 ksp-bootstrap/scripts/ci/classify_tf_plan.py \
+              "$work/plan.json" \
+              ksp-bootstrap/tests/fixtures/terraform-plan/protected-witness.json; then
+            echo 'A2-T06c FAIL: destructive plan unexpectedly returned success' >&2
             exit 1
+          else
+            rc=$?
+            if [[ "$rc" -ne 42 ]]; then
+              echo "A2-T06c FAIL: classifier exit=$rc expected 42" >&2
+              exit 1
+            fi
           fi
           echo 'A2-T06c-INDEXED: PASS real terraform show -json classified DESTRUCTIVE'
 
