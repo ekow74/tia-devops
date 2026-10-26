@@ -1,0 +1,65 @@
+name: KSP S02 Safety Gates
+
+on:
+  pull_request:
+    paths:
+      - 'ksp-bootstrap/**'
+      - 'packages/validators/**'
+      - 'packages/policies/**'
+      - 'governance/**'
+      - 'domain-packs/**'
+      - 'knowledge-packs/qualification/**'
+      - 'qa/mutation/**'
+      - 'qa/retrieval/**'
+      - 'platform/terraform/**'
+      - 'platform/compose/**'
+      - 'platform/ansible/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ksp-s02-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  static-safety:
+    name: Credential-free static safety gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      # Deliberately no Contabo, HCP, deployment, registry, or production secrets.
+      KSP_PR_PATH: untrusted
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Gate integrity
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          python3 ksp-bootstrap/scripts/ci/check_gate_integrity.py \
+            --base '${{ github.event.pull_request.base.sha }}' \
+            --head '${{ github.event.pull_request.head.sha }}'
+
+      - name: Terraform static policy - no provider credentials
+        shell: bash
+        run: python3 ksp-bootstrap/scripts/ci/check_terraform_static.py
+
+      - name: Compose published-port policy
+        shell: bash
+        run: python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py
+
+      - name: Prove credential-free PR path
+        shell: bash
+        run: |
+          test -z "${CONTABO_CLIENT_ID:-}"
+          test -z "${CONTABO_CLIENT_SECRET:-}"
+          test -z "${TFC_TOKEN:-}"
+          test -z "${TF_TOKEN_app_terraform_io:-}"
+          echo 'credential-free-pr-path: PASS'
