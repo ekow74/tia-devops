@@ -1,30 +1,38 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ksp.local/schemas/desired-state.schema.json",
-  "title": "KSP Desired State",
+  "title": "KSP Promotion-Signed Desired State",
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema_version",
     "environment",
     "sequence",
+    "target_release_sequence",
+    "issued_at",
+    "expires_at",
+    "release_manifest_ref",
     "release_manifest_digest",
     "software",
     "knowledge",
-    "compiler_digest",
+    "compiled_learner_bundle_digest",
     "qualification_bundle_digest",
-    "revocation_list_digest"
+    "revocation_list_digest",
+    "revocation_min_sequence",
+    "db_schema",
+    "migration",
+    "minimum_reconciler_version",
+    "expected_open_ports"
   ],
   "properties": {
-    "environment": {
-      "enum": ["staging", "production"]
-    },
-    "sequence": {
-      "type": "integer",
-      "minimum": 1
-    },
-    "release_manifest_digest": {
-      "$ref": "#/$defs/sha256"
-    },
+    "schema_version": { "const": "1.0" },
+    "environment": { "enum": ["staging", "production"] },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "target_release_sequence": { "type": "integer", "minimum": 1 },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "release_manifest_ref": { "$ref": "#/$defs/ociRef" },
+    "release_manifest_digest": { "$ref": "#/$defs/sha256" },
     "software": {
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/ociRef" },
@@ -40,18 +48,49 @@
         "bridge": { "$ref": "#/$defs/sha256" }
       }
     },
-    "compiler_digest": {
-      "$ref": "#/$defs/sha256"
+    "compiled_learner_bundle_digest": { "$ref": "#/$defs/sha256" },
+    "qualification_bundle_digest": { "$ref": "#/$defs/sha256" },
+    "revocation_list_digest": { "$ref": "#/$defs/sha256" },
+    "revocation_min_sequence": { "type": "integer", "minimum": 1 },
+    "db_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "type": "integer", "minimum": 1 },
+        "max": { "type": "integer", "minimum": 1 }
+      }
     },
-    "qualification_bundle_digest": {
-      "$ref": "#/$defs/sha256"
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "bundle_digest"],
+      "properties": {
+        "phase": { "enum": ["none", "expand", "contract"] },
+        "bundle_digest": {
+          "oneOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        }
+      }
     },
-    "revocation_list_digest": {
-      "$ref": "#/$defs/sha256"
+    "minimum_reconciler_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
     },
-    "rollback_parent_sequence": {
-      "type": ["integer", "null"],
-      "minimum": 1
+    "expected_open_ports": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
+    },
+    "rollback": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["record_digest"],
+      "properties": {
+        "record_digest": { "$ref": "#/$defs/sha256" }
+      }
     }
   },
   "$defs": {
