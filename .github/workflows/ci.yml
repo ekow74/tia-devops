@@ -1,0 +1,70 @@
+name: DevOps CI
+
+on:
+  pull_request:
+    paths:
+      - '.github/**'
+      - 'scripts/**'
+      - 'catalog/**'
+      - 'KSP_DEVOPS_UMBRELLA.md'
+  push:
+    branches: [main]
+    paths:
+      - '.github/**'
+      - 'scripts/**'
+      - 'catalog/**'
+      - 'KSP_DEVOPS_UMBRELLA.md'
+  workflow_dispatch:
+
+concurrency:
+  group: devops-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Fast deterministic gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate umbrella
+        shell: bash
+        run: bash scripts/ci/validate_devops_umbrella.sh
+
+  workflow-security:
+    name: Workflow security audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Audit GitHub Actions with zizmor
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: true
+
+  dependency-review:
+    name: Dependency change gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
