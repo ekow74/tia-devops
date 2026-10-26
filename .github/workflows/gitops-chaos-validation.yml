@@ -1,0 +1,60 @@
+name: KSP GitOps Chaos Candidate
+
+on:
+  pull_request:
+    paths:
+      - 'ksp-gitops/**'
+      - '.github/workflows/gitops-chaos-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ksp-gitops-chaos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate desired state
+        run: python3 ksp-gitops/scripts/verify_desired_state.py ksp-gitops/desired-state/staging.example.json
+
+      - name: Negative desired-state controls
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          src = Path('ksp-gitops/desired-state/staging.example.json')
+          data = json.loads(src.read_text())
+          data['software']['worker'] = 'ghcr.io/example/ksp-worker:latest'
+          Path('/tmp/unsafe-latest.json').write_text(json.dumps(data))
+          PY
+          if python3 ksp-gitops/scripts/verify_desired_state.py /tmp/unsafe-latest.json; then
+            echo 'unsafe latest-tag state unexpectedly passed' >&2
+            exit 1
+          fi
+
+      - name: Validate chaos catalogue JSON
+        run: python3 -m json.tool ksp-gitops/chaos/chaos-plan.json >/dev/null
+
+      - name: Validate Compose exposure policy
+        run: python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py ksp-gitops/chaos/docker-compose.chaos.yml
+
+      - name: Prove chaos production refusal
+        shell: bash
+        run: |
+          chmod +x ksp-gitops/chaos/run_guarded_chaos.sh
+          if KSP_ENV=production CHAOS_AUTHORIZED=true ksp-gitops/chaos/run_guarded_chaos.sh toxiproxy-up; then
+            echo 'chaos guard unexpectedly permitted production' >&2
+            exit 1
+          fi
+          echo 'production-chaos-refusal: PASS'
