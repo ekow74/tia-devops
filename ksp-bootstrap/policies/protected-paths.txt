@@ -22,6 +22,9 @@ ksp-bootstrap/governance/**
 ksp-bootstrap/policies/**
 ksp-bootstrap/scripts/ci/**
 ksp-bootstrap/tests/**
+ksp-bootstrap/terraform/**
+ksp-bootstrap/ansible/**
+ksp-pack-builder/**
 ksp-gitops/desired-state/**
 ksp-gitops/reconciler/**
 ksp-gitops/scripts/**
