@@ -1,0 +1,111 @@
+alifier_checklist->>'evidence_level_if_stated','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qualifier_checklist->>'off_label_status','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qualifier_checklist->>'jurisdiction_applicability','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qualifier_checklist->>'source_version','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qualifier_checklist->>'effective_date','') IN ('CHECKED','NOT_APPLICABLE')
+  )
+);
+
+-- A review cannot be changed/deleted while its exact claim revision is approved.
+-- Locking the claim revision serializes this path against approval.
+CREATE FUNCTION protect_human_dual_review() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE c claim_revision%ROWTYPE;
+BEGIN
+  SELECT * INTO c FROM claim_revision
+  WHERE claim_revision_id=OLD.claim_revision_id
+  FOR UPDATE;
+  IF FOUND AND c.status='APPROVED' AND c.verification_mode='HUMAN_DUAL' THEN
+    RAISE EXCEPTION 'approved HUMAN_DUAL review is immutable; move claim revision out of APPROVED first';
+  END IF;
+  RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+END $$;
+CREATE TRIGGER trg_human_dual_review_guard BEFORE UPDATE OR DELETE ON human_dual_review
+FOR EACH ROW EXECUTE FUNCTION protect_human_dual_review();
+
+-- Approval locks the exact review row and requires a content-hash match.
+CREATE FUNCTION enforce_human_dual_approval() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE r human_dual_review%ROWTYPE;
+BEGIN
+  IF NEW.status='APPROVED' AND NEW.verification_mode='HUMAN_DUAL' THEN
+    SELECT * INTO r FROM human_dual_review
+    WHERE claim_revision_id=NEW.claim_revision_id
+    FOR UPDATE;
+    IF NOT FOUND OR r.claim_id<>NEW.claim_id OR r.content_hash<>NEW.content_hash OR
+       r.abstractor_decision<>'SUPPORT' OR r.verifier_decision<>'CONFIRM' THEN
+      RAISE EXCEPTION 'HUMAN_DUAL revision cannot be approved without matching completed independent review';
+    END IF;
+  END IF;
+  IF NEW.status='APPROVED' THEN
+    NEW.was_approved := true;
+  END IF;
+  IF TG_OP='UPDATE' AND OLD.was_approved AND NOT NEW.was_approved THEN
+    RAISE EXCEPTION 'was_approved cannot be cleared';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER trg_human_dual_approval BEFORE INSERT OR UPDATE ON claim_revision
+FOR EACH ROW EXECUTE FUNCTION enforce_human_dual_approval();
+
+-- Ever-approved clinical content is append-only. Operational status may move to
+-- STALE/RECALLED, but any clinical edit requires a new revision.
+CREATE FUNCTION protect_approved_claim_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP='DELETE' AND OLD.was_approved THEN
+    RAISE EXCEPTION 'ever-approved claim revision cannot be deleted';
+  END IF;
+  IF TG_OP='UPDATE' AND OLD.was_approved AND (
+    NEW.claim_id IS DISTINCT FROM OLD.claim_id OR
+    NEW.revision_number IS DISTINCT FROM OLD.revision_number OR
+    NEW.claim_type IS DISTINCT FROM OLD.claim_type OR
+    NEW.claim_text IS DISTINCT FROM OLD.claim_text OR
+    NEW.context_frame IS DISTINCT FROM OLD.context_frame OR
+    NEW.verification_mode IS DISTINCT FROM OLD.verification_mode OR
+    NEW.safety_class IS DISTINCT FROM OLD.safety_class OR
+    NEW.authority_type IS DISTINCT FROM OLD.authority_type OR
+    NEW.guideline_registry_id IS DISTINCT FROM OLD.guideline_registry_id OR
+    NEW.effective_date IS DISTINCT FROM OLD.effective_date OR
+    NEW.content_hash IS DISTINCT FROM OLD.content_hash OR
+    NEW.supersedes_revision_id IS DISTINCT FROM OLD.supersedes_revision_id
+  ) THEN
+    RAISE EXCEPTION 'ever-approved clinical content is immutable; create a new claim revision';
+  END IF;
+  RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+END $$;
+CREATE TRIGGER trg_approved_claim_revision_guard BEFORE UPDATE OR DELETE ON claim_revision
+FOR EACH ROW EXECUTE FUNCTION protect_approved_claim_revision();
+
+CREATE TABLE bridge_relation (
+  relation_id TEXT PRIMARY KEY CHECK (relation_id ~ '^bridge:relation:[A-Za-z0-9._-]+$'),
+  relation_type TEXT NOT NULL CHECK (relation_type IN ('TREATS','AVOID_IN','MODIFIES_DOSING_OR_MONITORING','REQUIRES_MONITORING','MAY_WORSEN','ASSOCIATED_WITH')),
+  condition_concept_id TEXT NOT NULL REFERENCES concept(concept_id),
+  drug_or_class_concept_id TEXT NOT NULL REFERENCES concept(concept_id),
+  ownership_mode TEXT NOT NULL CHECK (ownership_mode IN ('BRIDGE_ASSERTION','PHARM_DERIVED_REFERENCE')),
+  source_claim_id TEXT REFERENCES claim(claim_id),
+  source_claim_revision_id TEXT REFERENCES claim_revision(claim_revision_id),
+  source_claim_content_hash CHAR(64) CHECK (source_claim_content_hash IS NULL OR source_claim_content_hash ~ '^[0-9A-Fa-f]{64}$'),
+  guideline_registry_id TEXT REFERENCES guideline_registry(registry_id),
+  status TEXT NOT NULL CHECK (status IN ('CANDIDATE','SUPPORTED','BLOCKED_EVIDENCE','BLOCKED_REVIEW','APPROVED','STALE','RECALLED')),
+  CHECK (
+    (ownership_mode='PHARM_DERIVED_REFERENCE' AND
+      source_claim_id IS NOT NULL AND source_claim_id LIKE 'pharm:claim:%' AND
+      source_claim_revision_id IS NOT NULL AND source_claim_revision_id LIKE 'pharm:claimrev:%' AND
+      source_claim_content_hash IS NOT NULL AND guideline_registry_id IS NULL) OR
+    (ownership_mode='BRIDGE_ASSERTION' AND source_claim_id IS NULL AND
+      source_claim_revision_id IS NULL AND source_claim_content_hash IS NULL AND guideline_registry_id IS NOT NULL)
+  ),
+  FOREIGN KEY (source_claim_revision_id, source_claim_id, source_claim_content_hash)
+    REFERENCES claim_revision(claim_revision_id, claim_id, content_hash)
+);
+
+CREATE TABLE release_lot (
+  lot_id TEXT PRIMARY KEY,
+  bundle_sha256 CHAR(64) NOT NULL CHECK (bundle_sha256 ~ '^[0-9A-Fa-f]{64}$'),
+  frozen_at TIMESTAMPTZ NOT NULL,
+  registry_snapshot_at TIMESTAMPTZ NOT NULL,
+  snapshot_isolation TEXT NOT NULL DEFAULT 'REPEATABLE READ' CHECK (snapshot_isolation='REPEATABLE READ'),
+  status TEXT NOT NULL CHECK (status IN ('CANDIDATE','FROZEN','RELEASED','QUARANTINED','RECALLED'))
+);
+
+CREATE TABLE release_lot_claim (
+  lot_id TEXT NOT NULL REFERENCES release_lot(lot_id),
+  claim_revision_id T
