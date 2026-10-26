@@ -1,0 +1,17 @@
+{
+  "resource_changes": [
+    {
+      "address": "module.control_staging[\"blue\"].contabo_instance.this",
+      "module_address": "module.control_staging[\"blue\"]",
+      "mode": "managed",
+      "type": "contabo_instance",
+      "name": "this",
+      "index": "blue",
+      "change": {
+        "actions": ["delete"],
+        "before": {"image_id": "ubuntu-24.04"},
+        "after": null
+      }
+    }
+  ]
+}
