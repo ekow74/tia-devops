@@ -2,8 +2,8 @@
 """Fail-closed validation for the promotion-signed KSP desired-state document.
 
 This validator checks structure and non-cryptographic policy. Cryptographic authority
-is verified separately by verify_signed_desired_state.sh using the pinned promotion
-key and build key. Git is never an authority or runtime input.
+is verified separately by verify_signed_desired_state.sh using pinned promotion/build
+keys. Git is never an authority or runtime input.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import argparse
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SHA256_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
@@ -77,6 +77,9 @@ def validate(
     expected_environment: str | None = None,
     current_reconciler_version: str | None = None,
     current_db_schema: int | None = None,
+    current_time: datetime | None = None,
+    clock_skew_tolerance_seconds: int = 300,
+    max_validity_seconds: int = 172800,
 ) -> None:
     missing = REQUIRED_TOP - data.keys()
     if missing:
@@ -100,6 +103,13 @@ def validate(
     expires = parse_time(data["expires_at"], "expires_at")
     if expires <= issued:
         fail("expires_at must be after issued_at")
+    if (expires - issued).total_seconds() > max_validity_seconds:
+        fail("desired-state validity window exceeds policy maximum")
+    if current_time is not None:
+        if issued > current_time + timedelta(seconds=clock_skew_tolerance_seconds):
+            fail("issued_at is in the future beyond clock-skew tolerance")
+        if current_time >= expires:
+            fail("desired state is expired")
 
     if not isinstance(data["release_manifest_ref"], str) or not OCI_RE.fullmatch(data["release_manifest_ref"]):
         fail("release_manifest_ref must be immutable OCI ref pinned by sha256 digest")
@@ -168,7 +178,7 @@ def validate(
 
     ports = data["expected_open_ports"]
     if not isinstance(ports, list) or any(not isinstance(p, int) or isinstance(p, bool) or not 1 <= p <= 65535 for p in ports):
-        fail("expected_open_ports must be an array of TCP/UDP port integers")
+        fail("expected_open_ports must be an array of port integers")
     if len(ports) != len(set(ports)):
         fail("expected_open_ports must be unique")
 
@@ -196,16 +206,23 @@ def main() -> int:
     parser.add_argument("--expected-environment", choices=("staging", "production"))
     parser.add_argument("--current-reconciler-version")
     parser.add_argument("--current-db-schema", type=int)
+    parser.add_argument("--now", help="RFC3339 time used for deterministic freshness validation")
+    parser.add_argument("--clock-skew-tolerance-seconds", type=int, default=300)
+    parser.add_argument("--max-validity-seconds", type=int, default=172800)
     args = parser.parse_args()
     try:
         candidate = load(args.candidate)
         previous = load(args.previous) if args.previous else None
+        current_time = parse_time(args.now, "--now") if args.now else None
         validate(
             candidate,
             previous,
             expected_environment=args.expected_environment,
             current_reconciler_version=args.current_reconciler_version,
             current_db_schema=args.current_db_schema,
+            current_time=current_time,
+            clock_skew_tolerance_seconds=args.clock_skew_tolerance_seconds,
+            max_validity_seconds=args.max_validity_seconds,
         )
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(f"desired-state-validation: FAIL: {exc}", file=sys.stderr)
