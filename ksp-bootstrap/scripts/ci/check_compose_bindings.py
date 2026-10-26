@@ -1,26 +1,56 @@
 #!/usr/bin/env python3
-"""Reject Docker Compose published ports that bind to all interfaces."""
+"""Reject Docker Compose published ports unless bound to approved local/private addresses."""
 from __future__ import annotations
 
 import argparse
 import ipaddress
-import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-SHORT = re.compile(r'^\s*-\s*["\']?([^#"\']+)["\']?\s*(?:#.*)?$')
+RFC1918 = tuple(
+    ipaddress.ip_network(net)
+    for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+ULA_V6 = ipaddress.ip_network("fc00::/7")
 
 
 def safe_host(host: str) -> bool:
-    host = host.strip()
-    if host == "127.0.0.1" or host == "::1":
-        return True
+    """Allow only loopback, IPv4 RFC1918, or IPv6 unique-local addresses.
+
+    Python's ipaddress.is_private intentionally classifies some special ranges,
+    including unspecified addresses on some versions, more broadly than the
+    network boundary KSP wants. Use explicit allowlists instead.
+    """
     try:
-        ip = ipaddress.ip_address(host)
-        return ip.is_private or ip.is_loopback
+        ip = ipaddress.ip_address(host.strip())
     except ValueError:
         return False
+    if ip.is_unspecified or ip.is_multicast:
+        return False
+    if ip.is_loopback:
+        return True
+    if isinstance(ip, ipaddress.IPv4Address):
+        return any(ip in network for network in RFC1918)
+    return ip in ULA_V6
+
+
+def short_syntax_host(value: str) -> str | None:
+    """Return explicit host IP for HOST:HOSTPORT:CONTAINERPORT; None if omitted."""
+    core = value.split("/", 1)[0]
+    if core.startswith("["):
+        close = core.find("]")
+        if close < 0:
+            return None
+        host = core[1:close]
+        remainder = core[close + 1 :]
+        if not remainder.startswith(":") or remainder.count(":") < 2:
+            return None
+        return host
+    parts = core.rsplit(":", 2)
+    if len(parts) != 3:
+        return None
+    return parts[0]
 
 
 def check(path: Path) -> list[str]:
@@ -34,9 +64,13 @@ def check(path: Path) -> list[str]:
     def flush_long(line_no: int) -> None:
         nonlocal long_entry_host, long_entry_published
         if long_entry_published and not long_entry_host:
-            errors.append(f"{path.relative_to(ROOT)}:{line_no}: long-syntax published port missing host_ip")
+            errors.append(
+                f"{path.relative_to(ROOT)}:{line_no}: long-syntax published port missing host_ip"
+            )
         elif long_entry_published and not safe_host(long_entry_host or ""):
-            errors.append(f"{path.relative_to(ROOT)}:{line_no}: unsafe host_ip {long_entry_host}")
+            errors.append(
+                f"{path.relative_to(ROOT)}:{line_no}: unsafe host_ip {long_entry_host}"
+            )
         long_entry_host = None
         long_entry_published = False
 
@@ -59,22 +93,25 @@ def check(path: Path) -> list[str]:
         if stripped.startswith("-"):
             flush_long(i)
             value = stripped[1:].strip().strip('"\'')
-            # Long syntax starts with '- target:' or just '-'.
-            if not value or value.startswith(("target:", "published:", "protocol:", "mode:", "host_ip:")):
+            # Long syntax may start on the list-item line.
+            if not value or value.startswith(
+                ("target:", "published:", "protocol:", "mode:", "host_ip:")
+            ):
                 if value.startswith("published:"):
                     long_entry_published = True
                 if value.startswith("host_ip:"):
                     long_entry_host = value.split(":", 1)[1].strip().strip('"\'')
                 continue
-            # Short syntax: HOST_IP:HOST_PORT:CONTAINER_PORT is required.
-            core = value.split("/", 1)[0]
-            parts = core.split(":")
-            if len(parts) < 3:
-                errors.append(f"{path.relative_to(ROOT)}:{i}: published port must bind explicit loopback/private IP: {value}")
-            else:
-                host = parts[0].strip("[]")
-                if not safe_host(host):
-                    errors.append(f"{path.relative_to(ROOT)}:{i}: published port binds unsafe host {host}: {value}")
+
+            host = short_syntax_host(value)
+            if host is None:
+                errors.append(
+                    f"{path.relative_to(ROOT)}:{i}: published port must bind explicit loopback/private IP: {value}"
+                )
+            elif not safe_host(host):
+                errors.append(
+                    f"{path.relative_to(ROOT)}:{i}: published port binds unsafe host {host}: {value}"
+                )
             continue
 
         if stripped.startswith("published:"):
