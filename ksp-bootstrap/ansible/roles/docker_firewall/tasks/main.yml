@@ -1,0 +1,84 @@
+---
+- name: Require explicit public interface
+  ansible.builtin.assert:
+    that:
+      - ksp_public_interface | length > 0
+    fail_msg: "ksp_public_interface must be explicitly set before Docker firewall hardening"
+
+- name: Install KSP Docker firewall script
+  ansible.builtin.template:
+    src: ksp-docker-user-firewall.sh.j2
+    dest: /usr/local/sbin/ksp-docker-user-firewall
+    owner: root
+    group: root
+    mode: "0750"
+  notify: restart ksp docker firewall
+
+- name: Install KSP Docker firewall systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ksp-docker-user-firewall.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=KSP fail-closed Docker DOCKER-USER firewall
+      Requires=docker.service
+      After=docker.service network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/ksp-docker-user-firewall
+      RemainAfterExit=yes
+      NoNewPrivileges=yes
+      ProtectHome=yes
+      PrivateTmp=yes
+
+      [Install]
+      WantedBy=multi-user.target
+  notify:
+    - reload systemd
+    - restart ksp docker firewall
+
+- name: Flush handlers before enablement
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable KSP Docker firewall at boot
+  ansible.builtin.systemd_service:
+    name: ksp-docker-user-firewall.service
+    enabled: true
+    state: started
+
+- name: Verify IPv4 KSP public drop rule exists
+  ansible.builtin.command:
+    argv:
+      - iptables
+      - -C
+      - DOCKER-USER
+      - -i
+      - "{{ ksp_public_interface }}"
+      - -m
+      - comment
+      - --comment
+      - KSP_DOCKER_PUBLIC_DROP
+      - -j
+      - DROP
+  changed_when: false
+
+- name: Verify IPv6 KSP public drop rule exists
+  ansible.builtin.command:
+    argv:
+      - ip6tables
+      - -C
+      - DOCKER-USER
+      - -i
+      - "{{ ksp_public_interface }}"
+      - -m
+      - comment
+      - --comment
+      - KSP_DOCKER_PUBLIC_DROP
+      - -j
+      - DROP
+  changed_when: false
+  when: ksp_manage_ipv6_docker_user | bool
