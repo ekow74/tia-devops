@@ -17,7 +17,7 @@ concurrency:
 jobs:
   postgres18-release-lot:
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:18
@@ -62,14 +62,33 @@ jobs:
             exit 1
           fi
 
-      - name: Load S06-compatible release-lot schema
-        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -f ksp-pack-builder/tests/release_lot_fixture_schema.sql
+      - name: Load exact canonical shipped phase0_schema.sql
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ksp-pack-builder/tests/run_postgres_ddl.sh
+          ksp-pack-builder/tests/run_postgres_ddl.sh
 
-      - name: Apply Pack Builder release-lot controls
-        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -f ksp-pack-builder/sql/release_lot_controls.sql
+      - name: Prove fixture schema is not the qualified schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f ksp-pack-builder/sql/phase0_schema.sql
+          sha256sum ksp-pack-builder/sql/phase0_schema.sql
+          test "$(sha256sum ksp-pack-builder/sql/phase0_schema.sql | awk '{print $1}')" = "369f1bb6544761840dd2502d65d66ada4d2da4bd8391129642550fe0fadd83f1"
 
-      - name: Run RL1/RL2/RL4/RL5 and positive-path regressions
+      - name: Run RL1/RL2/RL4/RL5 and positive-path regressions on real DDL
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -f ksp-pack-builder/tests/release_lot_regression.sql
+
+      - name: Run terminal-state RecallEvent and lot-delete regressions
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -f ksp-pack-builder/tests/release_lot_additional_regression.sql
+
+      - name: Run two-ordering approval-withdrawal concurrency qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ksp-pack-builder/tests/run_release_lot_concurrency.sh
+          ksp-pack-builder/tests/run_release_lot_concurrency.sh
 
       - name: Verify expected control objects
         shell: bash
@@ -81,12 +100,16 @@ jobs:
           WHERE NOT tgisinternal
             AND tgname IN (
               'trg_release_lot_claim_mutation',
+              'trg_release_lot_delete_guard',
               'trg_release_lot_state_transition',
-              'trg_claim_revision_release_lot_quarantine'
+              'trg_claim_revision_release_lot_quarantine',
+              'trg_recall_event_release_lot_quarantine'
             );
           SQL
           diff -u <(printf '%s\n' \
             trg_claim_revision_release_lot_quarantine \
+            trg_recall_event_release_lot_quarantine \
             trg_release_lot_claim_mutation \
+            trg_release_lot_delete_guard \
             trg_release_lot_state_transition | sort) /tmp/triggers.txt
           echo 'PACK_BUILDER_RELEASE_LOT_OBJECTS: PASS'
