@@ -11,8 +11,12 @@ services:
     ports:
       - "127.0.0.1:8474:8474"
     networks:
-      - chaos_net
+      - staging_app
+      - chaos_mgmt
 
 networks:
-  chaos_net:
+  staging_app:
+    external: true
+    name: ${KSP_STAGING_APP_NETWORK:-ksp_staging_app}
+  chaos_mgmt:
     internal: true
