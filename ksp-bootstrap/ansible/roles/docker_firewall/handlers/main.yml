@@ -1,0 +1,9 @@
+---
+- name: reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: restart ksp docker firewall
+  ansible.builtin.systemd_service:
+    name: ksp-docker-user-firewall.service
+    state: restarted
