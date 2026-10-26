@@ -39,14 +39,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Gate integrity
-        if: github.event_name == 'pull_request'
-        shell: bash
-        run: |
-          python3 ksp-bootstrap/scripts/ci/check_gate_integrity.py \
-            --base '${{ github.event.pull_request.base.sha }}' \
-            --head '${{ github.event.pull_request.head.sha }}'
-
       - name: Terraform static policy - no provider credentials
         shell: bash
         run: python3 ksp-bootstrap/scripts/ci/check_terraform_static.py
@@ -63,3 +55,11 @@ jobs:
           test -z "${TFC_TOKEN:-}"
           test -z "${TF_TOKEN_app_terraform_io:-}"
           echo 'credential-free-pr-path: PASS'
+
+      - name: Gate integrity / independent approval
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          python3 ksp-bootstrap/scripts/ci/check_gate_integrity.py \
+            --base '${{ github.event.pull_request.base.sha }}' \
+            --head '${{ github.event.pull_request.head.sha }}'
