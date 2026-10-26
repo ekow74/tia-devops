@@ -1,0 +1,18 @@
+# Paths whose changes can weaken KSP safety/release gates.
+# In the production repository these paths must also be protected by a GitHub
+# ruleset that the Governor identity cannot approve, merge, or bypass.
+packages/validators/**
+packages/policies/**
+governance/**
+domain-packs/*/fixtures/**
+domain-packs/*/validators/**
+knowledge-packs/qualification/**
+qa/mutation/**
+qa/retrieval/**
+.github/workflows/**
+platform/terraform/**
+platform/compose/**
+platform/ansible/**
+config/*threshold*
+ksp-bootstrap/policies/**
+ksp-bootstrap/scripts/ci/**
