@@ -22,3 +22,7 @@ ksp-bootstrap/governance/**
 ksp-bootstrap/policies/**
 ksp-bootstrap/scripts/ci/**
 ksp-bootstrap/tests/**
+ksp-gitops/desired-state/**
+ksp-gitops/reconciler/**
+ksp-gitops/scripts/**
+ksp-gitops/chaos/**
