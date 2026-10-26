@@ -59,7 +59,7 @@ jobs:
           advanced-security: true
 
   dependency-vulnerability-review:
-    name: Dependency vulnerability gate (zero-cost fallback)
+    name: KSP bootstrap vulnerability gate (zero-cost fallback)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 12
@@ -71,12 +71,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Scan dependency manifests and filesystem
+      - name: Scan KSP bootstrap dependency surface
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
-          scan-ref: .
+          scan-ref: ksp-bootstrap
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: '1'
+
+# The historical umbrella contains unrelated training/reference material and is
+# scanned by security-deep.yml. The future private ksp-platform repository will
+# scan its complete production tree here because it will contain no legacy corpus.
