@@ -1,0 +1,19 @@
+{
+  "environment": "staging",
+  "sequence": 42,
+  "release_manifest_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "software": {
+    "knowledge_api": "ghcr.io/example/ksp-knowledge-api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "worker": "ghcr.io/example/ksp-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "reviewer_ui": "ghcr.io/example/ksp-reviewer-ui@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "knowledge": {
+    "pharmacology": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "medsurg": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "bridge": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "compiler_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "qualification_bundle_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "revocation_list_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "rollback_parent_sequence": 41
+}
