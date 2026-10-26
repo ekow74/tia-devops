@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ksp.local/schemas/desired-state.schema.json",
+  "title": "KSP Desired State",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "environment",
+    "sequence",
+    "release_manifest_digest",
+    "software",
+    "knowledge",
+    "compiler_digest",
+    "qualification_bundle_digest",
+    "revocation_list_digest"
+  ],
+  "properties": {
+    "environment": {
+      "enum": ["staging", "production"]
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "release_manifest_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "software": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/ociRef" },
+      "minProperties": 1
+    },
+    "knowledge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pharmacology", "medsurg", "bridge"],
+      "properties": {
+        "pharmacology": { "$ref": "#/$defs/sha256" },
+        "medsurg": { "$ref": "#/$defs/sha256" },
+        "bridge": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "compiler_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "qualification_bundle_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "revocation_list_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "rollback_parent_sequence": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "ociRef": {
+      "type": "string",
+      "pattern": "^[^@\\s]+@sha256:[a-f0-9]{64}$"
+    }
+  }
+}
