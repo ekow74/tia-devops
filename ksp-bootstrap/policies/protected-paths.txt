@@ -18,5 +18,7 @@ platform/terraform/**
 platform/compose/**
 platform/ansible/**
 config/*threshold*
+ksp-bootstrap/governance/**
 ksp-bootstrap/policies/**
 ksp-bootstrap/scripts/ci/**
+ksp-bootstrap/tests/**
