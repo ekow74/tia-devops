@@ -71,11 +71,10 @@ class GC0004HardeningTests(unittest.TestCase):
             with self.subTest(sample=sample):
                 self.assertTrue(trigger_mod.uses_pull_request_target(sample))
 
-        self.assertFalse(
-            trigger_mod.uses_pull_request_target(
-                "# on: pull_request_target\nname: pull_request_target docs\non: push\n"
-            )
-        )
+        self.assertFalse(trigger_mod.uses_pull_request_target("# on: pull_request_target\non: push\n"))
+        # GC-0005 intentionally fails closed on non-comment token occurrences,
+        # even if they could be descriptive text rather than a trigger.
+        self.assertTrue(trigger_mod.uses_pull_request_target("name: pull_request_target docs\non: push\n"))
 
     def test_r1_unlisted_scalar_and_flow_forms_fail_validation(self):
         with tempfile.TemporaryDirectory() as td:
