@@ -111,6 +111,34 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
-          python3 ksp-bootstrap/scripts/ci/check_gate_integrity.py \
-            --base '${{ github.event.pull_request.base.sha }}' \
-            --head '${{ github.event.pull_request.head.sha }}'
+          set -euo pipefail
+          BASE_SHA='${{ github.event.pull_request.base.sha }}'
+          HEAD_SHA='${{ github.event.pull_request.head.sha }}'
+          CHECKER='ksp-bootstrap/scripts/ci/check_gate_integrity.py'
+          POLICY='ksp-bootstrap/policies/protected-paths.txt'
+
+          # After bootstrap, validator authority comes from the trusted PR base,
+          # never from files supplied by the PR head.  Overwriting only the
+          # worktree copies preserves the repository object database used by
+          # git diff/show while preventing a modified head checker/policy from
+          # deciding its own result.
+          if git cat-file -e "${BASE_SHA}:${CHECKER}" 2>/dev/null && \
+             git cat-file -e "${BASE_SHA}:${POLICY}" 2>/dev/null; then
+            git show "${BASE_SHA}:${CHECKER}" > "${CHECKER}"
+            git show "${BASE_SHA}:${POLICY}" > "${POLICY}"
+            echo "gate-integrity-source: trusted base ${BASE_SHA}"
+          else
+            # One-time bootstrap exception: PR #2 establishes the checker and
+            # policy on a base that does not yet contain either file.
+            if [[ '${{ github.event.pull_request.number }}' != '2' || \
+                  "${BASE_SHA}" != 'b9a7a3fa8c787a57ec862f4150c156691928ff05' ]]; then
+              echo 'gate-integrity: FAIL' >&2
+              echo ' - trusted base checker/policy missing outside bootstrap exception' >&2
+              exit 1
+            fi
+            echo "gate-integrity-source: bootstrap head exception for PR #2"
+          fi
+
+          python3 "${CHECKER}" \
+            --base "${BASE_SHA}" \
+            --head "${HEAD_SHA}"
