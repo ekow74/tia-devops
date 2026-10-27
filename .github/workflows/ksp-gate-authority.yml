@@ -1,0 +1,76 @@
+name: KSP Gate Authority
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: ksp-gate-authority-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# pull_request_target is used deliberately so the workflow definition and
+# checker come from the trusted base, not from the PR head.
+permissions:
+  contents: read
+
+jobs:
+  gate-authority:
+    name: KSP trusted gate authority
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      KSP_PR_NUMBER: ${{ github.event.pull_request.number }}
+      KSP_EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      KSP_BASE_REF: ${{ github.event.pull_request.base.ref }}
+      KSP_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Checkout trusted default branch only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Evaluate merge-authoritative GateChange approval
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${KSP_BASE_REF}" != "${KSP_DEFAULT_BRANCH}" ]]; then
+            echo "gate-authority: FAIL - PR base must be the default branch" >&2
+            exit 1
+          fi
+
+          CHECKER='ksp-bootstrap/scripts/ci/check_gate_integrity.py'
+          POLICY='ksp-bootstrap/policies/protected-paths.txt'
+          TMP_DIR="${RUNNER_TEMP}/ksp-gate-authority"
+          TMP_CHECKER="${TMP_DIR}/check_gate_integrity.py"
+          mkdir -p "${TMP_DIR}"
+
+          # Resolve the current trusted base, rather than trusting a stale event
+          # base SHA after approval receipts are published.
+          git fetch --no-tags origin \
+            "refs/heads/${KSP_DEFAULT_BRANCH}:refs/remotes/origin/${KSP_DEFAULT_BRANCH}"
+          BASE_SHA="$(git rev-parse "refs/remotes/origin/${KSP_DEFAULT_BRANCH}")"
+
+          # Fetch the PR head as a git object only. Never checkout, source, import,
+          # or execute code from this ref.
+          git fetch --no-tags origin \
+            "refs/pull/${KSP_PR_NUMBER}/head:refs/remotes/origin/ksp-pr-${KSP_PR_NUMBER}-head"
+          HEAD_SHA="$(git rev-parse "refs/remotes/origin/ksp-pr-${KSP_PR_NUMBER}-head")"
+          if [[ "${HEAD_SHA}" != "${KSP_EVENT_HEAD_SHA}" ]]; then
+            echo "gate-authority: FAIL - fetched PR head does not match event head" >&2
+            exit 1
+          fi
+
+          git cat-file -e "${BASE_SHA}:${CHECKER}"
+          git cat-file -e "${BASE_SHA}:${POLICY}"
+          git show "${BASE_SHA}:${CHECKER}" > "${TMP_CHECKER}"
+
+          python3 -I "${TMP_CHECKER}" \
+            --repo-root "${GITHUB_WORKSPACE}" \
+            --base "${BASE_SHA}" \
+            --head "${HEAD_SHA}" \
+            --policy-ref "${BASE_SHA}"

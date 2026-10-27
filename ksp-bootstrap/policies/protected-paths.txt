@@ -14,6 +14,8 @@ qa/database/**
 database/**
 migrations/**
 .github/workflows/**
+.github/CODEOWNERS
+scripts/ci/validate_devops_umbrella.sh
 platform/terraform/**
 platform/compose/**
 platform/ansible/**

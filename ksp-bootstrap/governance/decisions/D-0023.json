@@ -1,5 +1,6 @@
 {
   "decision_id": "D-0023",
+  "record_type": "OWNER_DECISION",
   "title": "tia-devops gate-enforcement boundary",
   "date": "2026-10-27",
   "status": "ACCEPTED",
@@ -8,16 +9,20 @@
   "decision": "Accept process-enforced approval, ledger, CI, and merge integrity for tia-devops because this repository is a non-production template/reference repository with no production deployment authority. This limitation does not block approval of the tia-devops bootstrap.",
   "accepted_risk": "Within tia-devops, approval files and CI results are auditable process evidence rather than an unbypassable authorization boundary. A repository administrator or other sufficiently privileged actor could still write an approval artifact, bypass a failing check, or merge directly because GitHub branch/ruleset enforcement is not the security boundary here.",
   "production_boundary": "This risk acceptance MUST NOT transfer to ksp-platform or any repository with production deployment, promotion, secrets, or protected knowledge-pack authority.",
+  "revisit_trigger": "Before any ksp-platform protected-path merge, or if tia-devops gains production authority.",
   "ksp_platform_activation_preconditions": [
     "Protect main with a GitHub ruleset or branch protection that applies to administrators unless an explicitly documented emergency path is approved.",
     "Require pull requests for changes to main; no routine direct pushes.",
-    "Require the named KSP safety/gate status checks to pass before merge.",
+    "Require the merge-authoritative KSP gate through a ruleset-required workflow executed from a trusted base or pinned ref that the PR head cannot modify; a same-named status check is not equivalent.",
+    "Run the merge-authoritative GateChange checker from trusted base code only (for example pull_request_target); never checkout, source, import, or execute PR-head code in that authority workflow.",
+    "Require CODEOWNERS review by the designated human owner/maintainer for .github/workflows/**, .github/CODEOWNERS, protected-path policy, and the gate-integrity checker, with the repository ruleset enforcing that review.",
     "Reserve merge authority for the designated human owner/maintainer; automation identities must not have merge or ruleset-bypass authority.",
     "Use a dedicated automation identity with no repository administration permission and no branch/ruleset bypass permission.",
     "Disallow force pushes and deletion of main.",
     "Treat approval/ledger artifacts as evidence only; they must not by themselves grant GitHub merge authorization.",
-    "Run and retain a negative enforcement test proving the automation identity cannot merge or push to main when a required check fails and cannot bypass the ruleset."
+    "Run and retain negative enforcement tests proving the automation identity cannot merge or push to main when a required check fails and cannot bypass the ruleset; additionally prove that a PR which removes or renames the trusted gate workflow/job and a PR which adds a same-named passing job are both unmergeable."
   ],
+  "plan_dependency": "Private ksp-platform activation must not claim the GitHub-enforced preconditions are met until the Owner approves a GitHub plan or alternative enforcement design that supports them. This record authorizes no spend.",
   "activation_block": "Until every ksp-platform activation precondition above is implemented and evidenced, protected-path merge authority, Terraform apply, production promotion, and production deployment remain prohibited.",
-  "review_context": "KSP_GateChange_PR2_REVIEW_v4.0_2026-10-27"
+  "review_context": "KSP_GateChange_GC0003_REVIEW_v1.0_2026-10-27"
 }

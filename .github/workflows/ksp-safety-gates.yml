@@ -2,21 +2,6 @@ name: KSP S02 Safety Gates
 
 on:
   pull_request:
-    paths:
-      - 'ksp-bootstrap/**'
-      - 'packages/validators/**'
-      - 'packages/policies/**'
-      - 'governance/**'
-      - 'domain-packs/**'
-      - 'knowledge-packs/qualification/**'
-      - 'qa/mutation/**'
-      - 'qa/retrieval/**'
-      - 'platform/terraform/**'
-      - 'platform/compose/**'
-      - 'platform/ansible/**'
-      - 'src/ksp_knowledge/**'
-      - 'tests/**'
-      - '.github/workflows/**'
   workflow_dispatch:
 
 concurrency:
@@ -32,9 +17,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      KSP_PR_PATH: untrusted
-      KSP_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      KSP_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      KSP_CURRENT_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      KSP_CURRENT_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Checkout full history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,7 +26,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Gate-binding regression tests (ME1/ME2)
+      - name: Gate-binding regression tests (ME1/ME2/R1/R2)
         shell: bash
         run: python3 -m unittest discover -s ksp-bootstrap/tests -p 'test_*.py' -v
 
@@ -109,8 +93,10 @@ jobs:
           test -z "${CONTABO_CLIENT_SECRET:-}"
           echo 'credential-free-pr-path: PASS'
 
+  # Advisory mirror only. The production-authoritative merge gate is the
+  # separate base-trusted KSP Gate Authority workflow.
   gate-integrity:
-    name: Gate integrity / independent approval
+    name: Gate integrity / advisory PR-head mirror
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -122,11 +108,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Evaluate gate from isolated checker
+      - name: Evaluate advisory gate from isolated checker
         shell: bash
         run: |
           set -euo pipefail
-          BASE_SHA='${{ github.event.pull_request.base.sha }}'
+          BASE_REF='${{ github.event.pull_request.base.ref }}'
           HEAD_SHA='${{ github.event.pull_request.head.sha }}'
           PR_NUMBER='${{ github.event.pull_request.number }}'
           BOOTSTRAP_ANCHOR='b9a7a3fa8c787a57ec862f4150c156691928ff05'
@@ -136,8 +122,12 @@ jobs:
           TMP_CHECKER="${TMP_DIR}/check_gate_integrity.py"
           mkdir -p "${TMP_DIR}"
 
-          # The worktree remains on the trusted base. Fetch only the head object
-          # when checkout --fetch-depth=0 did not already bring it in.
+          # Re-resolve the live trusted base so a receipt-only main advance is
+          # visible even when GitHub replays an older pull_request base SHA.
+          git fetch --no-tags origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          BASE_SHA="$(git rev-parse "refs/remotes/origin/${BASE_REF}")"
+
+          # The PR head is fetched as an object only; it is never checked out.
           if ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
             git fetch --no-tags --depth=1 origin "${HEAD_SHA}"
           fi
@@ -148,12 +138,8 @@ jobs:
              git cat-file -e "${BASE_SHA}:${POLICY}" 2>/dev/null; then
             git show "${BASE_SHA}:${CHECKER}" > "${TMP_CHECKER}"
             POLICY_REF="${BASE_SHA}"
-            echo "gate-integrity-source: trusted base ${BASE_SHA}"
+            echo "gate-integrity-source: live trusted base ${BASE_SHA}"
           else
-            # One-time PR #2 bootstrap: the base may move forward from the
-            # pinned anchor only through approval-ledger receipt commits.
-            # The isolated head checker enforces that ancestry/path condition
-            # before reading those receipts from BASE_SHA.
             if [[ "${PR_NUMBER}" != '2' ]]; then
               echo 'gate-integrity: FAIL' >&2
               echo ' - trusted base checker/policy missing outside bootstrap PR #2' >&2

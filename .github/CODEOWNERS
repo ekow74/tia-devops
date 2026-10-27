@@ -1,0 +1,7 @@
+# KSP gate-authority control surfaces.
+# In ksp-platform, the repository ruleset must enforce CODEOWNERS review.
+# This file alone is audit metadata; it does not create merge enforcement.
+/.github/CODEOWNERS @ekow74
+/.github/workflows/** @ekow74
+/ksp-bootstrap/policies/protected-paths.txt @ekow74
+/ksp-bootstrap/scripts/ci/check_gate_integrity.py @ekow74
