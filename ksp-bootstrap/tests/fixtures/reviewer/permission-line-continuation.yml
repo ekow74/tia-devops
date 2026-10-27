@@ -1,0 +1,11 @@
+name: continued-check-key
+on:
+  pull_request_target:
+permissions:
+  checks: "writ\
+    e"
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "fixture only"

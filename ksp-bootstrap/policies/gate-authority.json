@@ -1,0 +1,15 @@
+{
+  "policy_version": 1,
+  "reviewed_authority_paths": [
+    ".github/workflows/ksp-gate-authority.yml",
+    ".github/workflows/phase0-review-gate.yml"
+  ],
+  "blocked_permissions": [
+    "checks",
+    "statuses"
+  ],
+  "always_read_only_permissions": [
+    "contents",
+    "pull-requests"
+  ]
+}

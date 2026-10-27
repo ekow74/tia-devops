@@ -1,0 +1,42 @@
+name: Phase-0 independent reviewer (unqualified)
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] base-trusted read-only workflow; head is data only
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+
+concurrency:
+  group: phase0-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  classify-and-review:
+    name: Phase-0 reviewer scaffold (not required)
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      KSP_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      KSP_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      KSP_EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
+      KSP_EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      KSP_PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Checkout the exact trusted PR base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify base-trusted PR file listing and emit unqualified verdict
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 -I ksp-bootstrap/scripts/ci/phase0_review_gate.py

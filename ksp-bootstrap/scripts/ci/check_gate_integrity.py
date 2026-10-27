@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 POLICY_PATH = "ksp-bootstrap/policies/protected-paths.txt"
+AUTHORITY_POLICY_PATH = "ksp-bootstrap/policies/gate-authority.json"
 GATE_DIR = "ksp-bootstrap/governance/gate-changes"
 APPROVAL_DIR = "ksp-bootstrap/governance/approvals"
 
@@ -24,6 +25,36 @@ SUSPICIOUS_ADDITIONS = (
     "|| true",
 )
 THRESHOLD_RE = re.compile(r"(?i)(threshold|minimum|min_|recall|coverage)[^0-9-]*(-?\d+(?:\.\d+)?)")
+PERMISSION_WRITE_RE = re.compile(
+    r"""(?im)(?:["']?(actions|attestations|checks|contents|deployments|discussions|id-token|issues|packages|pages|pull-requests|repository-projects|security-events|statuses)["']?\s*:\s*["']?write\b|write-all\b)"""
+)
+PERMISSIONS_EXPRESSION_RE = re.compile(
+    r"""(?im)^\s*["']?permissions["']?\s*:\s*(?:.*\$\{\{|[&*|>])"""
+)
+PERMISSION_INDIRECT_RE = re.compile(
+    r"""(?im)["']?(actions|attestations|checks|contents|deployments|discussions|id-token|issues|packages|pages|pull-requests|repository-projects|security-events|statuses)["']?\s*:\s*(?:[&*!|>])"""
+)
+PERMISSION_VALUE_RE = re.compile(
+    r"""(?im)^\s*["']?(actions|attestations|checks|contents|deployments|discussions|id-token|issues|packages|pages|pull-requests|repository-projects|security-events|statuses)["']?\s*:\s*(.*?)\s*$"""
+)
+YAML_ESCAPE_RE = re.compile(
+    r"\\(?:u[0-9a-f]{4}|U[0-9a-f]{8}|x[0-9a-f]{2})", re.I
+)
+YAML_ANCHOR_ALIAS_RE = re.compile(r"(?m)(?:^|[\s{,])(?:&|\*)")
+YAML_EXPLICIT_KEY_RE = re.compile(r"(?m)^\s*[?:]\s+")
+YAML_TAG_RE = re.compile(r"(?m)(?:^|[\s{,])!(?:!|<|[A-Za-z0-9])")
+YAML_FLOW_PERMISSIONS_RE = re.compile(
+    r"""(?m)^\s*["']?permissions["']?\s*:\s*[\[{]"""
+)
+YAML_LINE_CONTINUATION_RE = re.compile(r"\\\r?\n")
+YAML_QUOTED_CONTINUATION_RE = re.compile(r"(?m)^\s*['\"][^\n]*\\$")
+YAML_BLOCK_SCALAR_RE = re.compile(r"^\s*[^#\s].*:\s*[|>][1-9]?[+-]?\s*(?:#.*)?$")
+YAML_ALIAS_KEY_RE = re.compile(r"(?m)^\s*\*[^\s:]+:")
+YAML_TAGGED_KEY_RE = re.compile(r"(?m)^\s*![^\s]+\s+[^:\n]+:")
+PULL_REQUEST_RE = re.compile(r"(?<![A-Za-z0-9_])pull_request(?![A-Za-z0-9_])")
+PULL_REQUEST_TARGET_RE = re.compile(
+    r"(?<![A-Za-z0-9_])pull_request_target(?![A-Za-z0-9_])"
+)
 
 ROOT = Path.cwd()
 _POLICY_REF: str | None = None
@@ -73,6 +104,148 @@ def changed_files(base: str, head: str) -> list[tuple[str, str]]:
         if len(parts) >= 2:
             rows.append((parts[0], parts[-1]))
     return rows
+
+
+def _active_workflow_text(text: str) -> str:
+    return "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+
+
+def _permission_blocks(text: str) -> list[str]:
+    lines = text.splitlines()
+    blocks: list[str] = []
+    for index, line in enumerate(lines):
+        match = re.match(r"""^(\s*)["']?permissions["']?\s*:(.*)$""", line)
+        if not match:
+            continue
+        indent = len(match.group(1))
+        block = [line]
+        for following in lines[index + 1 :]:
+            if following.strip() and len(following) - len(following.lstrip()) <= indent:
+                break
+            block.append(following)
+        blocks.append("\n".join(block))
+    return blocks
+
+
+def _has_quoted_yaml_continuation(text: str) -> bool:
+    block_indent: int | None = None
+    for line in text.splitlines():
+        indent = len(line) - len(line.lstrip())
+        if block_indent is not None:
+            if not line.strip() or indent > block_indent:
+                continue
+            block_indent = None
+        if YAML_BLOCK_SCALAR_RE.match(line):
+            block_indent = indent
+        elif YAML_QUOTED_CONTINUATION_RE.match(line):
+            return True
+    return False
+
+
+def validate_workflow_permissions(
+    path: str, text: str, policy: dict[str, Any]
+) -> None:
+    active = _active_workflow_text(text)
+    if YAML_ESCAPE_RE.search(active):
+        raise ValueError(f"{path}: escaped YAML syntax is not reviewable")
+    if _has_quoted_yaml_continuation(active):
+        raise ValueError(f"{path}: escaped YAML key continuation is not reviewable")
+    if YAML_EXPLICIT_KEY_RE.search(active):
+        raise ValueError(f"{path}: explicit YAML mapping keys are not reviewable")
+    if YAML_ALIAS_KEY_RE.search(active) or YAML_TAGGED_KEY_RE.search(active):
+        raise ValueError(f"{path}: aliased or tagged YAML mapping keys are not reviewable")
+    blocks = _permission_blocks(active)
+    if any(YAML_LINE_CONTINUATION_RE.search(block) for block in blocks):
+        raise ValueError(f"{path}: escaped YAML permission continuation is not reviewable")
+    if any(YAML_ANCHOR_ALIAS_RE.search(block) for block in blocks):
+        raise ValueError(f"{path}: YAML permission anchors and aliases are not reviewable")
+    if any(YAML_TAG_RE.search(block) for block in blocks):
+        raise ValueError(f"{path}: YAML permission tags are not reviewable")
+    if any(YAML_EXPLICIT_KEY_RE.search(block) for block in blocks):
+        raise ValueError(f"{path}: explicit YAML permission keys are not reviewable")
+    if any(YAML_FLOW_PERMISSIONS_RE.search(block) for block in blocks):
+        raise ValueError(f"{path}: flow-style permissions are not reviewable")
+    for block in blocks:
+        if PERMISSIONS_EXPRESSION_RE.search(block):
+            raise ValueError(f"{path}: noncanonical workflow permissions are not reviewable")
+        if PERMISSION_INDIRECT_RE.search(block):
+            raise ValueError(f"{path}: indirect checks/statuses permissions are not reviewable")
+        for match in PERMISSION_VALUE_RE.finditer(block):
+            value = match.group(2).strip()
+            if value not in {"read", "write", "none", '"read"', '"write"', '"none"', "'read'", "'write'", "'none'"}:
+                raise ValueError(f"{path}: noncanonical workflow permission value")
+    grants = {
+        match.group(1).lower()
+        for block in blocks
+        for match in PERMISSION_WRITE_RE.finditer(block)
+        if match.group(1)
+    }
+    if any("write-all" in block for block in blocks):
+        grants.add("write-all")
+    if not grants:
+        return
+
+    if PULL_REQUEST_RE.search(active):
+        raise ValueError(f"{path}: write permissions are forbidden on pull_request jobs")
+    if grants & {"contents", "pull-requests", "write-all"}:
+        raise ValueError(f"{path}: contents/pull-requests/write-all permissions are prohibited")
+    if PULL_REQUEST_TARGET_RE.search(active) and grants - {"checks", "statuses"}:
+        raise ValueError(f"{path}: pull_request_target write permissions are not reviewed")
+    if not grants & {"checks", "statuses"}:
+        return
+    if grants - {"checks", "statuses"}:
+        raise ValueError(f"{path}: only checks/statuses writes may be considered for review")
+
+    authorized_paths = policy.get("reviewed_authority_paths")
+    if not isinstance(authorized_paths, list) or not all(
+        isinstance(item, str) for item in authorized_paths
+    ):
+        raise ValueError("base Gate Authority policy has an invalid authority path list")
+    if path not in authorized_paths:
+        raise ValueError(f"{path}: checks/statuses write is outside reviewed authority paths")
+    if not PULL_REQUEST_TARGET_RE.search(active):
+        raise ValueError(f"{path}: write permission lacks a trusted pull_request_target trigger")
+
+    blocked = policy.get("blocked_permissions")
+    if blocked != ["checks", "statuses"]:
+        raise ValueError("base Gate Authority policy does not block checks and statuses writes")
+
+
+def validate_head_workflow_permissions(base: str, head: str) -> None:
+    """Apply the base-trusted authority allowlist to all workflow files at PR head."""
+    listing = run("git", "ls-tree", "-r", "--name-only", head, "--", ".github/workflows")
+    if not listing.splitlines():
+        return
+    policy = _load_json(git_show(base, AUTHORITY_POLICY_PATH), AUTHORITY_POLICY_PATH)
+    if set(policy) != {
+        "policy_version",
+        "reviewed_authority_paths",
+        "blocked_permissions",
+        "always_read_only_permissions",
+    }:
+        raise ValueError("base Gate Authority policy does not match the strict schema")
+    if policy.get("policy_version") != 1:
+        raise ValueError("base Gate Authority policy version is unsupported")
+    if policy.get("blocked_permissions") != ["checks", "statuses"]:
+        raise ValueError("base Gate Authority policy must block checks and statuses writes")
+    if policy.get("always_read_only_permissions") != ["contents", "pull-requests"]:
+        raise ValueError("base Gate Authority policy must keep contents and pull-requests read-only")
+    paths = policy.get("reviewed_authority_paths")
+    if not isinstance(paths, list) or not paths or not all(
+        isinstance(path, str) and path.startswith(".github/workflows/")
+        for path in paths
+    ):
+        raise ValueError("base Gate Authority policy has an invalid authority path list")
+    if len(paths) != len(set(paths)):
+        raise ValueError("base Gate Authority policy has an invalid authority path list")
+    for path in listing.splitlines():
+        if not path.endswith((".yml", ".yaml")):
+            continue
+        try:
+            text = git_show(head, path)
+        except subprocess.CalledProcessError as exc:
+            raise ValueError(f"cannot read workflow from {head}:{path}") from exc
+        validate_workflow_permissions(path, text, policy)
 
 
 def _load_json(text: str, source: str) -> dict[str, Any]:
@@ -291,6 +464,13 @@ def main() -> int:
     except (OSError, subprocess.CalledProcessError, ValueError) as exc:
         print("gate-integrity: FAIL")
         print(f" - cannot evaluate protected paths: {exc}")
+        return 1
+
+    try:
+        validate_head_workflow_permissions(ns.base, ns.head)
+    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+        print("gate-integrity: FAIL")
+        print(f" - cannot verify workflow authority permissions: {exc}")
         return 1
 
     if not protected_changes:
