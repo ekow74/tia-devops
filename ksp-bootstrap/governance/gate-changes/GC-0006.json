@@ -1,0 +1,18 @@
+{
+  "gate_change_id": "GC-0006",
+  "decision_log_id": "D-0024",
+  "reason": "Close Claude GC-0005 v2.0 follow-ups: replace hand-written workflow trigger parsing with real YAML decoding, fail closed on malformed/missing-parser conditions, protect and prohibit unreviewed zizmor configuration files, and record the GC-0005 approval-SHA rollout boundary.",
+  "reviewer_kind": "CLAUDE",
+  "review_status": "PENDING_EXTERNAL_BASE_LEDGER",
+  "review_reference": "KSP_GateChange_GC0006_REVIEW_v1.0_2026-10-27",
+  "approval_threshold": "N3 real YAML trigger parsing, m1 zizmor configuration protection, and m2 approval-SHA rollout note",
+  "scope": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/ksp-safety-gates.yml",
+    "ksp-bootstrap/policies/protected-paths.txt",
+    "ksp-bootstrap/requirements-ci.txt",
+    "ksp-bootstrap/scripts/ci/check_pull_request_target_exceptions.py",
+    "ksp-bootstrap/tests/test_gc0006_hardening.py"
+  ],
+  "note": "PR cannot authorize itself. Claude approval must bind this GateChange, ordered scope, threshold, review reference and final head SHA, then be published only as ksp-bootstrap/governance/approvals/GC-0006.json on trusted main. D-0024 records that GC-0005's 40-hex approval-SHA hardening became authoritative only after merge 332f6bc2bf8c38ca5b58333d96f6eca208e702c7. R3/GitHub plan spend and ksp-platform activation remain out of scope."
+}
