@@ -1,0 +1,19 @@
+{
+  "approval_consumed_by": "GC-0001",
+  "approval_id": "CLAUDE-GC-0001-S04-2026-10-27",
+  "approved_gate_change_id": "GC-0001",
+  "approved_head_sha": "53b6b3df2a5fc8c64f55b33f41e1729c34b26d39",
+  "approved_scope": [
+    ".github/workflows/ksp-safety-gates.yml",
+    ".github/workflows/ci.yml",
+    "ksp-bootstrap/governance/decisions/D-0023.json",
+    "ksp-bootstrap/policies/**",
+    "ksp-bootstrap/scripts/ci/**",
+    "ksp-bootstrap/tests/**",
+    "ksp-bootstrap/KSP_CICD_SECURITY_BASELINE_S02.md"
+  ],
+  "approved_threshold": "A1-A6 bootstrap gate establishment",
+  "decision": "APPROVED",
+  "review_reference": "KSP_GateChange_PR2_REVIEW_v4.0_2026-10-27",
+  "review_revision_id": "gdrive:1sRrBqeZOKZgY-wd1XHNoXtbk9v5HqiW15rDDqfxbV_I@2026-10-27T07:42:23.636Z"
+}
