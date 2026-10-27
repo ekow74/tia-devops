@@ -65,20 +65,27 @@ class GateAuthorityHardeningTests(unittest.TestCase):
         self.assertNotIn("ref: ${{ github.event.pull_request.head.sha }}", text)
         self.assertNotRegex(text, r"(?m)^\s*git\s+(checkout|switch)\b")
 
-    def test_r2_reviewed_exception_is_exact_and_protected(self):
+    def test_r2_reviewed_exception_is_exact_rule_scoped_and_protected(self):
         exception_lines = [
             line.strip()
             for line in PR_TARGET_EXCEPTION.read_text().splitlines()
             if line.strip() and not line.lstrip().startswith("#")
         ]
-        self.assertEqual(exception_lines, [".github/workflows/ksp-gate-authority.yml"])
+        self.assertEqual(
+            exception_lines,
+            [
+                ".github/workflows/ksp-gate-authority.yml pull_request_target",
+                ".github/workflows/ksp-gate-authority.yml zizmor:dangerous-triggers",
+            ],
+        )
         validator = UMBRELLA_VALIDATOR.read_text()
         self.assertIn("check_pull_request_target_exceptions.py", validator)
         self.assertIn('--repo-root "$ROOT"', validator)
         helper = PR_TARGET_CHECKER.read_text()
         self.assertIn("pull-request-target.txt", helper)
-        self.assertIn("pull_request_target workflow lacks reviewed exact-path exception", helper)
-        self.assertIn("stale pull_request_target exception", helper)
+        self.assertIn("exact-path/rule exception", helper)
+        self.assertIn("stale workflow exception", helper)
+        self.assertIn("zizmor inline ignore lacks reviewed exact path/rule exception", helper)
         policy = POLICY.read_text().splitlines()
         self.assertIn("governance/**", policy)
         self.assertIn("scripts/ci/validate_devops_umbrella.sh", policy)
