@@ -11,47 +11,69 @@ mod = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
 spec.loader.exec_module(mod)
 
+HEAD = "a" * 40
 
-def approved(gid: str, approval_id: str, scope: list[str]) -> dict:
+
+def gate(gid: str, scope: list[str], threshold: str = "protected-path merge authorization") -> dict:
     return {
         "gate_change_id": gid,
         "decision_log_id": "D-0020",
         "reason": "test",
         "reviewer_kind": "CLAUDE",
-        "review_status": "APPROVED",
         "review_reference": "CLAUDE-TEST",
+        "approval_threshold": threshold,
         "scope": scope,
-        "approval": {
-            "approval_id": approval_id,
-            "approved_gate_change_id": gid,
-            "approved_scope": scope,
-            "approved_threshold": "protected-path merge authorization",
-            "review_revision_id": "REV-1",
-        },
+    }
+
+
+def approval(gid: str, approval_id: str, scope: list[str], *, head: str = HEAD, threshold: str = "protected-path merge authorization") -> dict:
+    return {
+        "decision": "APPROVED",
+        "approval_id": approval_id,
+        "approved_gate_change_id": gid,
+        "approved_scope": scope,
+        "approved_threshold": threshold,
+        "review_reference": "CLAUDE-TEST",
+        "review_revision_id": "REV-1",
+        "approved_head_sha": head,
     }
 
 
 class GateIntegrityTests(unittest.TestCase):
     def test_a1_t05e_replayed_unrelated_approval_rejected(self):
-        record = approved("GC-0002", "APP-1", ["ksp-bootstrap/scripts/ci/**"])
-        record["approval"]["approved_gate_change_id"] = "GC-9999"
+        record = gate("GC-0002", ["ksp-bootstrap/scripts/ci/**"])
+        wrong = approval("GC-9999", "APP-1", ["ksp-bootstrap/scripts/ci/**"])
         with self.assertRaises(ValueError):
-            mod.validate_gatechange_records([record], ["ksp-bootstrap/scripts/ci/x.py"])
+            mod.validate_gatechange_records([record], ["ksp-bootstrap/scripts/ci/x.py"], head_sha=HEAD, approvals=[wrong])
 
     def test_a1_t05f_reused_approval_rejected(self):
-        base = approved("GC-0001", "APP-1", ["ksp-bootstrap/policies/**"])
-        current = approved("GC-0002", "APP-1", ["ksp-bootstrap/scripts/ci/**"])
+        records = [
+            gate("GC-0001", ["ksp-bootstrap/policies/**"]),
+            gate("GC-0002", ["ksp-bootstrap/scripts/ci/**"]),
+        ]
+        approvals = [
+            approval("GC-0001", "APP-1", ["ksp-bootstrap/policies/**"]),
+            approval("GC-0002", "APP-1", ["ksp-bootstrap/scripts/ci/**"]),
+        ]
         with self.assertRaises(ValueError):
-            mod.validate_gatechange_records([current], ["ksp-bootstrap/scripts/ci/x.py"], base_records=[base])
+            mod.validate_gatechange_records(records, ["ksp-bootstrap/policies/x", "ksp-bootstrap/scripts/ci/x.py"], head_sha=HEAD, approvals=approvals)
 
     def test_scope_must_cover_changed_protected_path(self):
-        record = approved("GC-0002", "APP-2", ["ksp-bootstrap/policies/**"])
+        record = gate("GC-0002", ["ksp-bootstrap/policies/**"])
+        receipt = approval("GC-0002", "APP-2", ["ksp-bootstrap/policies/**"])
         with self.assertRaises(ValueError):
-            mod.validate_gatechange_records([record], ["ksp-bootstrap/scripts/ci/x.py"])
+            mod.validate_gatechange_records([record], ["ksp-bootstrap/scripts/ci/x.py"], head_sha=HEAD, approvals=[receipt])
 
     def test_bound_single_use_approval_passes(self):
-        record = approved("GC-0002", "APP-2", ["ksp-bootstrap/scripts/ci/**"])
-        mod.validate_gatechange_records([record], ["ksp-bootstrap/scripts/ci/x.py"])
+        record = gate("GC-0002", ["ksp-bootstrap/scripts/ci/**"])
+        receipt = approval("GC-0002", "APP-2", ["ksp-bootstrap/scripts/ci/**"])
+        mod.validate_gatechange_records([record], ["ksp-bootstrap/scripts/ci/x.py"], head_sha=HEAD, approvals=[receipt])
+
+    def test_head_mismatch_rejected(self):
+        record = gate("GC-0002", ["ksp-bootstrap/scripts/ci/**"])
+        receipt = approval("GC-0002", "APP-2", ["ksp-bootstrap/scripts/ci/**"], head="b" * 40)
+        with self.assertRaises(ValueError):
+            mod.validate_gatechange_records([record], ["ksp-bootstrap/scripts/ci/x.py"], head_sha=HEAD, approvals=[receipt])
 
     def test_a1_t06_validator_surfaces_are_protected(self):
         pats = mod.patterns()
