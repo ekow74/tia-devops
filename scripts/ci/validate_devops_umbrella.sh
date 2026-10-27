@@ -54,35 +54,11 @@ if [[ -d .github/workflows ]]; then
     fi
   done < <(grep -RhoE 'uses:[[:space:]]*[^#[:space:]]+' .github/workflows 2>/dev/null | sed -E 's/^uses:[[:space:]]*//' || true)
 
-  pr_target_allowlist="governance/workflow-exceptions/pull-request-target.txt"
-  mapfile -t pr_target_files < <(
-    grep -RlE '^[[:space:]]*pull_request_target:' .github/workflows 2>/dev/null | sort || true
-  )
-  if (( ${#pr_target_files[@]} > 0 )); then
-    if [[ ! -f "$pr_target_allowlist" ]]; then
-      printf '%s\n' "${pr_target_files[@]}" >&2
-      fail "pull_request_target is prohibited unless each workflow has a reviewed exact-path exception"
-    else
-      for workflow in "${pr_target_files[@]}"; do
-        if ! grep -Fxq "$workflow" "$pr_target_allowlist"; then
-          printf '%s\n' "$workflow" >&2
-          fail "pull_request_target workflow lacks reviewed exact-path exception: $workflow"
-        fi
-      done
-    fi
-  fi
-
-  if [[ -f "$pr_target_allowlist" ]]; then
-    while IFS= read -r exception || [[ -n "$exception" ]]; do
-      [[ -z "$exception" || "$exception" == \#* ]] && continue
-      if [[ ! -f "$exception" ]]; then
-        fail "stale pull_request_target exception points to missing workflow: $exception"
-        continue
-      fi
-      if ! grep -qE '^[[:space:]]*pull_request_target:' "$exception"; then
-        fail "stale pull_request_target exception points to workflow without pull_request_target: $exception"
-      fi
-    done < "$pr_target_allowlist"
+  pr_target_checker="ksp-bootstrap/scripts/ci/check_pull_request_target_exceptions.py"
+  if [[ ! -f "$pr_target_checker" ]]; then
+    fail "missing protected pull_request_target exception checker: $pr_target_checker"
+  elif ! python3 "$pr_target_checker" --repo-root "$ROOT"; then
+    fail "pull_request_target exception validation failed"
   fi
 
   if grep -RInE 'permissions:[[:space:]]*write-all' .github/workflows >/tmp/ksp-write-all.txt 2>/dev/null; then

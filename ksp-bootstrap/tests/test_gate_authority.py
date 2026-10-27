@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ROOT.parent
 CHECKER = ROOT / "scripts/ci/check_gate_integrity.py"
+PR_TARGET_CHECKER = ROOT / "scripts/ci/check_pull_request_target_exceptions.py"
 STATIC_WORKFLOW = REPO_ROOT / ".github/workflows/ksp-safety-gates.yml"
 AUTHORITY_WORKFLOW = REPO_ROOT / ".github/workflows/ksp-gate-authority.yml"
 CODEOWNERS = REPO_ROOT / ".github/CODEOWNERS"
@@ -72,12 +73,16 @@ class GateAuthorityHardeningTests(unittest.TestCase):
         ]
         self.assertEqual(exception_lines, [".github/workflows/ksp-gate-authority.yml"])
         validator = UMBRELLA_VALIDATOR.read_text()
-        self.assertIn("pull-request-target.txt", validator)
-        self.assertIn('grep -Fxq "$workflow" "$pr_target_allowlist"', validator)
-        self.assertIn("stale pull_request_target exception", validator)
+        self.assertIn("check_pull_request_target_exceptions.py", validator)
+        self.assertIn('--repo-root "$ROOT"', validator)
+        helper = PR_TARGET_CHECKER.read_text()
+        self.assertIn("pull-request-target.txt", helper)
+        self.assertIn("pull_request_target workflow lacks reviewed exact-path exception", helper)
+        self.assertIn("stale pull_request_target exception", helper)
         policy = POLICY.read_text().splitlines()
         self.assertIn("governance/**", policy)
         self.assertIn("scripts/ci/validate_devops_umbrella.sh", policy)
+        self.assertIn("ksp-bootstrap/scripts/ci/**", policy)
 
     def test_r2_codeowners_and_policy_protect_gate_authority_surfaces(self):
         owners = CODEOWNERS.read_text()

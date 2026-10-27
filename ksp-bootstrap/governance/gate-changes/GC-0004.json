@@ -1,0 +1,20 @@
+{
+  "gate_change_id": "GC-0004",
+  "decision_log_id": "D-0023",
+  "reason": "Close Claude GC-0003 review follow-ups ME1 and R1 and the subsequent zizmor findings: preserve both sides of protected renames, detect every supported pull_request_target syntax before applying the reviewed exact-path exception, remove direct PR-context interpolation from advisory shell code, and make High-severity zizmor findings fail CI for active repository workflows.",
+  "reviewer_kind": "CLAUDE",
+  "review_status": "PENDING_EXTERNAL_BASE_LEDGER",
+  "review_reference": "KSP_GateChange_GC0004_REVIEW_v1.0_2026-10-27",
+  "approval_threshold": "ME1 rename protection, R1 trigger-form detection, template-injection removal, and blocking High-severity workflow audit",
+  "scope": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/ksp-safety-gates.yml",
+    ".github/workflows/ksp-gate-authority.yml",
+    "scripts/ci/validate_devops_umbrella.sh",
+    "ksp-bootstrap/scripts/ci/check_gate_integrity.py",
+    "ksp-bootstrap/scripts/ci/check_pull_request_target_exceptions.py",
+    "ksp-bootstrap/tests/test_gate_authority.py",
+    "ksp-bootstrap/tests/test_gc0004_hardening.py"
+  ],
+  "note": "This is the first GateChange intended to be judged by the base-trusted KSP Gate Authority introduced by GC-0003. The PR cannot authorize itself: Claude approval must be exact-bound to this GateChange, ordered scope, threshold, review reference, and final head SHA, then published as ksp-bootstrap/governance/approvals/GC-0004.json on trusted main before merge. R3 and any GitHub plan/spend remain out of scope."
+}

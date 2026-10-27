@@ -46,17 +46,20 @@ jobs:
     timeout-minutes: 8
     permissions:
       contents: read
-      security-events: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Audit GitHub Actions with zizmor
+      - name: Audit active GitHub workflows with zizmor (block HIGH)
         uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
-          advanced-security: true
+          inputs: .github/workflows
+          advanced-security: false
+          annotations: true
+          min-severity: high
+          version: v1.30.1
 
   dependency-vulnerability-review:
     name: KSP bootstrap vulnerability gate (zero-cost fallback)
