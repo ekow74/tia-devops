@@ -14,6 +14,8 @@ AUTHORITY_WORKFLOW = REPO_ROOT / ".github/workflows/ksp-gate-authority.yml"
 CODEOWNERS = REPO_ROOT / ".github/CODEOWNERS"
 D0023 = ROOT / "governance/decisions/D-0023.json"
 POLICY = ROOT / "policies/protected-paths.txt"
+UMBRELLA_VALIDATOR = REPO_ROOT / "scripts/ci/validate_devops_umbrella.sh"
+PR_TARGET_EXCEPTION = REPO_ROOT / "governance/workflow-exceptions/pull-request-target.txt"
 
 spec = importlib.util.spec_from_file_location("check_gate_integrity_gc3", CHECKER)
 mod = importlib.util.module_from_spec(spec)
@@ -61,6 +63,21 @@ class GateAuthorityHardeningTests(unittest.TestCase):
         self.assertIn('if [[ "${HEAD_SHA}" != "${KSP_EVENT_HEAD_SHA}" ]]', text)
         self.assertNotIn("ref: ${{ github.event.pull_request.head.sha }}", text)
         self.assertNotRegex(text, r"(?m)^\s*git\s+(checkout|switch)\b")
+
+    def test_r2_reviewed_exception_is_exact_and_protected(self):
+        exception_lines = [
+            line.strip()
+            for line in PR_TARGET_EXCEPTION.read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        self.assertEqual(exception_lines, [".github/workflows/ksp-gate-authority.yml"])
+        validator = UMBRELLA_VALIDATOR.read_text()
+        self.assertIn("pull-request-target.txt", validator)
+        self.assertIn('grep -Fxq "$workflow" "$pr_target_allowlist"', validator)
+        self.assertIn("stale pull_request_target exception", validator)
+        policy = POLICY.read_text().splitlines()
+        self.assertIn("governance/**", policy)
+        self.assertIn("scripts/ci/validate_devops_umbrella.sh", policy)
 
     def test_r2_codeowners_and_policy_protect_gate_authority_surfaces(self):
         owners = CODEOWNERS.read_text()
