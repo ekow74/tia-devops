@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = ROOT.parent
 SCRIPT = ROOT / "scripts/ci/check_gate_integrity.py"
 spec = importlib.util.spec_from_file_location("check_gate_integrity", SCRIPT)
 mod = importlib.util.module_from_spec(spec)
@@ -90,6 +91,14 @@ class GateIntegrityTests(unittest.TestCase):
         ]
         for path in required:
             self.assertTrue(any(mod.path_matches(path, p) for p in pats), path)
+
+    def test_a1_t07_workflow_materializes_checker_and_policy_from_base(self):
+        workflow = (REPO_ROOT / ".github/workflows/ksp-safety-gates.yml").read_text()
+        self.assertIn('git show "${BASE_SHA}:${CHECKER}" > "${CHECKER}"', workflow)
+        self.assertIn('git show "${BASE_SHA}:${POLICY}" > "${POLICY}"', workflow)
+        self.assertIn('gate-integrity-source: trusted base ${BASE_SHA}', workflow)
+        self.assertIn("bootstrap head exception for PR #2", workflow)
+        self.assertIn("b9a7a3fa8c787a57ec862f4150c156691928ff05", workflow)
 
 
 if __name__ == "__main__":
