@@ -1,0 +1,21 @@
+{
+  "approval_consumed_by": "GC-0003",
+  "approval_id": "CLAUDE-GC-0003-S01-2026-10-27",
+  "approved_gate_change_id": "GC-0003",
+  "approved_head_sha": "37730e44963abe18fb178cb507c041e26e4053e7",
+  "approved_scope": [
+    ".github/CODEOWNERS",
+    ".github/workflows/ksp-safety-gates.yml",
+    ".github/workflows/ksp-gate-authority.yml",
+    "governance/workflow-exceptions/pull-request-target.txt",
+    "scripts/ci/validate_devops_umbrella.sh",
+    "ksp-bootstrap/governance/decisions/D-0023.json",
+    "ksp-bootstrap/policies/protected-paths.txt",
+    "ksp-bootstrap/tests/test_gate_authority.py",
+    "ksp-bootstrap/KSP_CICD_SECURITY_BASELINE_S02.md"
+  ],
+  "approved_threshold": "R1 trigger coverage, R2 base-trusted gate authority, reviewed pull_request_target exception, and m2 D-0023 alignment",
+  "decision": "APPROVED",
+  "review_reference": "KSP_GateChange_GC0003_REVIEW_v1.0_2026-10-27",
+  "review_revision_id": "gdrive:1oE0kvqR-jfiXHGrHPubavizXDc5xvcb6gL0_lZSOvIU@2026-10-27T08:39:41.955Z"
+}
