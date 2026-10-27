@@ -157,6 +157,8 @@ def validate_gatechange_records(
     """Validate scope-bound, head-bound, single-use approvals from trusted base state."""
     if not records:
         raise ValueError("protected path changed without a GateChange record")
+    if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+        raise ValueError("resolved PR head must be a lowercase 40-hex commit SHA")
 
     approvals_by_gate: dict[str, dict[str, Any]] = {}
     approval_ids: dict[str, str] = {}
@@ -216,8 +218,11 @@ def validate_gatechange_records(
             raise ValueError(f"GateChange {gid}: base approval missing {', '.join(missing_approval)}")
         if approval["approved_gate_change_id"] != gid:
             raise ValueError(f"GateChange {gid}: approval is bound to a different GateChange")
-        if approval["approved_head_sha"] != head_sha:
-            raise ValueError(f"GateChange {gid}: approval is bound to head {approval['approved_head_sha']}, not {head_sha}")
+        approved_head_sha = str(approval["approved_head_sha"])
+        if not re.fullmatch(r"[0-9a-f]{40}", approved_head_sha):
+            raise ValueError(f"GateChange {gid}: approved_head_sha must be a lowercase 40-hex commit SHA")
+        if approved_head_sha != head_sha:
+            raise ValueError(f"GateChange {gid}: approval is bound to head {approved_head_sha}, not {head_sha}")
         if approval["review_reference"] != record["review_reference"]:
             raise ValueError(f"GateChange {gid}: approval review reference mismatch")
         if approval["approved_threshold"] != record["approval_threshold"]:
@@ -269,9 +274,10 @@ def main() -> int:
 
     try:
         configure_repo(ns.repo_root, ns.policy_ref)
+        resolved_head_sha = run("git", "rev-parse", f"{ns.head}^{{commit}}").strip()
     except (OSError, subprocess.CalledProcessError) as exc:
         print("gate-integrity: FAIL")
-        print(f" - cannot establish repository root: {exc}")
+        print(f" - cannot establish repository root/head: {exc}")
         return 1
 
     if ns.bootstrap_anchor and not bootstrap_base_is_receipts_only(ns.bootstrap_anchor, ns.base):
@@ -315,7 +321,7 @@ def main() -> int:
         validate_gatechange_records(
             records,
             protected_paths,
-            head_sha=ns.head,
+            head_sha=resolved_head_sha,
             approvals=base_approval_records(ns.base),
         )
     except ValueError as exc:

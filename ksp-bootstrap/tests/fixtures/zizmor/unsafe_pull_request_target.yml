@@ -1,0 +1,15 @@
+name: GC-0005 zizmor HIGH negative fixture
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  fixture:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: No-op
+        run: echo 'negative fixture should never be an active repository workflow'
