@@ -110,11 +110,12 @@ jobs:
 
       - name: Evaluate advisory gate from isolated checker
         shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          BASE_REF='${{ github.event.pull_request.base.ref }}'
-          HEAD_SHA='${{ github.event.pull_request.head.sha }}'
-          PR_NUMBER='${{ github.event.pull_request.number }}'
           BOOTSTRAP_ANCHOR='b9a7a3fa8c787a57ec862f4150c156691928ff05'
           CHECKER='ksp-bootstrap/scripts/ci/check_gate_integrity.py'
           POLICY='ksp-bootstrap/policies/protected-paths.txt'
