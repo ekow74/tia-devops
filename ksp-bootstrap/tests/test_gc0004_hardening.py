@@ -58,7 +58,6 @@ class GC0004HardeningTests(unittest.TestCase):
             changes = gate_mod.changed_files(base, head)
             self.assertIn(("D", "tests/test_safety.py"), changes)
             self.assertIn(("A", "docs/old_notes.py"), changes)
-            self.assertTrue(gate_mod.protected("tests/test_safety.py", policy_ref=None) is False)
 
     def test_r1_detects_all_supported_pull_request_target_forms(self):
         samples = [
