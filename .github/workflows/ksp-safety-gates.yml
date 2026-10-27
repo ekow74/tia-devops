@@ -14,6 +14,8 @@ on:
       - 'platform/terraform/**'
       - 'platform/compose/**'
       - 'platform/ansible/**'
+      - 'src/ksp_knowledge/**'
+      - 'tests/**'
       - '.github/workflows/**'
   workflow_dispatch:
 
@@ -28,9 +30,8 @@ jobs:
   static-safety:
     name: Credential-free static safety gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
-      # Deliberately no Contabo, HCP, deployment, registry, or production secrets.
       KSP_PR_PATH: untrusted
     steps:
       - name: Checkout full history
@@ -38,6 +39,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Gate-binding regression tests (ME1/ME2)
+        shell: bash
+        run: python3 -m unittest discover -s ksp-bootstrap/tests -p 'test_*.py' -v
 
       - name: Terraform static policy - production paths
         shell: bash
@@ -66,6 +71,10 @@ jobs:
       - name: Terraform HCL formatting/syntax
         shell: bash
         run: terraform -chdir=ksp-bootstrap/terraform fmt -check -recursive
+
+      - name: Real terraform show -json indexed-address probe
+        shell: bash
+        run: bash ksp-bootstrap/scripts/ci/terraform_real_plan_probe.sh
 
       - name: Compose published-port policy - production paths
         shell: bash
