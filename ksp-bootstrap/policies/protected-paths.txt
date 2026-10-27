@@ -14,6 +14,7 @@ qa/database/**
 database/**
 migrations/**
 .github/workflows/**
+.github/CODEOWNERS
 platform/terraform/**
 platform/compose/**
 platform/ansible/**
