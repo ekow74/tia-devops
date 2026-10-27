@@ -66,7 +66,7 @@ def protected(path: str, policy_ref: str | None = None) -> bool:
 
 
 def changed_files(base: str, head: str) -> list[tuple[str, str]]:
-    out = run("git", "diff", "--name-status", f"{base}...{head}")
+    out = run("git", "diff", "--no-renames", "--name-status", f"{base}...{head}")
     rows: list[tuple[str, str]] = []
     for line in out.splitlines():
         parts = line.split("\t")
