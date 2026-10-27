@@ -4,7 +4,7 @@
   "reason": "Implement Claude review v1.0 A1-A6 CI/CD safety remediations and establish the protected-gate mechanism itself; N4 owner decision D-0023 accepts process-enforced ledger/merge integrity only for non-production tia-devops and requires technical enforcement before ksp-platform protected-path merges.",
   "reviewer_kind": "CLAUDE",
   "review_status": "PENDING_EXTERNAL_BASE_LEDGER",
-  "review_reference": "KSP_GateChange_PR2_REVIEW_v3.0_2026-10-27",
+  "review_reference": "KSP_GateChange_PR2_REVIEW_v4.0_2026-10-27",
   "approval_threshold": "A1-A6 bootstrap gate establishment",
   "scope": [
     ".github/workflows/ksp-safety-gates.yml",
