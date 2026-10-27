@@ -18,6 +18,17 @@ platform/terraform/**
 platform/compose/**
 platform/ansible/**
 config/*threshold*
+# Canonical Knowledge/clinical validator surfaces (ME2)
+src/ksp_knowledge/safety.py
+src/ksp_knowledge/quantity.py
+src/ksp_knowledge/governance.py
+src/ksp_knowledge/revocation.py
+src/ksp_knowledge/pack.py
+src/ksp_knowledge/release.py
+src/ksp_knowledge/platform.py
+tests/**
+tests/fixtures/**
+# Bootstrap/reference implementation surfaces
 ksp-bootstrap/governance/**
 ksp-bootstrap/policies/**
 ksp-bootstrap/scripts/ci/**
