@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate reviewed pull_request_target exceptions without a YAML dependency."""
+"""Validate reviewed pull_request_target and zizmor exceptions without a YAML dependency."""
 from __future__ import annotations
 
 import argparse
@@ -8,16 +8,16 @@ import sys
 from pathlib import Path
 
 TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_])pull_request_target(?![A-Za-z0-9_])")
-ON_RE = re.compile(r"^(?P<indent>[ \t]*)on\s*:\s*(?P<rest>.*)$")
+ZIZMOR_IGNORE_RE = re.compile(r"(?i)\bzizmor\s*:\s*ignore\[")
 
 
-def strip_comment(line: str) -> str:
-    """Strip YAML comments while preserving # inside quoted strings."""
+def split_yaml_comment(line: str) -> tuple[str, str]:
+    """Split code from a YAML comment while preserving # inside quoted strings."""
     out: list[str] = []
     single = False
     double = False
     escaped = False
-    for ch in line:
+    for index, ch in enumerate(line):
         if escaped:
             out.append(ch)
             escaped = False
@@ -35,40 +35,27 @@ def strip_comment(line: str) -> str:
             out.append(ch)
             continue
         if ch == "#" and not single and not double:
-            break
+            return "".join(out), line[index + 1 :]
         out.append(ch)
-    return "".join(out)
+    return "".join(out), ""
 
 
-def indent_width(prefix: str) -> int:
-    return len(prefix.expandtabs(8))
+def strip_comment(line: str) -> str:
+    return split_yaml_comment(line)[0]
 
 
 def uses_pull_request_target(text: str) -> bool:
-    lines = text.splitlines()
-    for i, raw in enumerate(lines):
-        line = strip_comment(raw).rstrip()
-        if not line.strip():
-            continue
-        match = ON_RE.match(line)
-        if not match:
-            continue
+    """Fail closed: any non-comment token requires an exact reviewed exception."""
+    stripped = "\n".join(strip_comment(line) for line in text.splitlines())
+    return bool(TOKEN_RE.search(stripped))
 
-        base_indent = indent_width(match.group("indent"))
-        rest = match.group("rest").strip()
-        if rest:
-            return bool(TOKEN_RE.search(rest))
 
-        for nested_raw in lines[i + 1 :]:
-            nested = strip_comment(nested_raw).rstrip()
-            if not nested.strip():
-                continue
-            leading = nested[: len(nested) - len(nested.lstrip(" \t"))]
-            if indent_width(leading) <= base_indent:
-                break
-            if TOKEN_RE.search(nested.strip()):
-                return True
-        return False
+def has_zizmor_ignore_comment(text: str) -> bool:
+    """Return True for an actual YAML comment carrying a zizmor inline ignore."""
+    for line in text.splitlines():
+        _, comment = split_yaml_comment(line)
+        if comment and ZIZMOR_IGNORE_RE.search(comment):
+            return True
     return False
 
 
@@ -96,27 +83,39 @@ def validate(repo_root: Path, workflows_dir: Path, allowlist_path: Path) -> list
     if len(allowlist) != len(set(allowlist)):
         errors.append("pull_request_target exception list contains duplicate paths")
 
-    detected: list[str] = []
-    for workflow in workflow_files(workflows_dir):
-        if uses_pull_request_target(workflow.read_text()):
-            detected.append(workflow.relative_to(repo_root).as_posix())
-
-    if detected and not allowlist_path.exists():
-        errors.append("pull_request_target is prohibited unless each workflow has a reviewed exact-path exception")
-
     allowed = set(allowlist)
+    detected: list[str] = []
+    suppressed: list[str] = []
+    for workflow in workflow_files(workflows_dir):
+        relative = workflow.relative_to(repo_root).as_posix()
+        text = workflow.read_text()
+        if uses_pull_request_target(text):
+            detected.append(relative)
+        if has_zizmor_ignore_comment(text):
+            suppressed.append(relative)
+
+    if (detected or suppressed) and not allowlist_path.exists():
+        errors.append(
+            "pull_request_target/zizmor exceptions are prohibited unless each workflow has a reviewed exact-path exception"
+        )
+
     for workflow in detected:
         if workflow not in allowed:
             errors.append(f"pull_request_target workflow lacks reviewed exact-path exception: {workflow}")
+
+    for workflow in suppressed:
+        if workflow not in allowed:
+            errors.append(f"zizmor inline ignore lacks reviewed exact-path exception: {workflow}")
 
     for exception in allowlist:
         target = repo_root / exception
         if not target.is_file():
             errors.append(f"stale pull_request_target exception points to missing workflow: {exception}")
             continue
-        if not uses_pull_request_target(target.read_text()):
+        text = target.read_text()
+        if not uses_pull_request_target(text) and not has_zizmor_ignore_comment(text):
             errors.append(
-                f"stale pull_request_target exception points to workflow without pull_request_target: {exception}"
+                f"stale pull_request_target exception points to workflow without pull_request_target or zizmor ignore: {exception}"
             )
 
     return errors
@@ -139,7 +138,7 @@ def main() -> int:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)
         return 1
-    print("pull_request_target exception validation PASSED")
+    print("pull_request_target/zizmor exception validation PASSED")
     return 0
 
 
