@@ -16,6 +16,23 @@ Protected paths are listed in `policies/protected-paths.txt`. In the production 
 
 The repo ruleset is an external control and cannot be considered complete until it is applied to the private production repo and tested with the Governor identity.
 
+## N4 — Repository enforcement boundary
+
+Owner decision `D-0023` selects option A for `tia-devops` only. `tia-devops` is a non-production template/reference repository, so its GateChange records, approval ledger, and CI checks are process and audit controls; this repository does **not** claim that those artifacts are an unbypassable GitHub authorization boundary. That limitation does not block approval of the bootstrap.
+
+This risk acceptance MUST NOT transfer to `ksp-platform`. Before `ksp-platform` receives protected-path merge authority, Terraform apply capability, production promotion authority, production secrets, or production deployment authority, all of the following are mandatory:
+
+- protect `main` with GitHub ruleset/branch-protection enforcement;
+- require pull requests for routine changes to `main`;
+- require the named KSP safety/gate checks to pass before merge;
+- reserve merge authority for the designated human owner/maintainer;
+- use a dedicated automation identity with no repository administration, merge, or ruleset-bypass authority;
+- disallow force pushes and deletion of `main`;
+- treat approval/ledger files as evidence only, never as GitHub merge authorization by themselves;
+- run and retain a negative enforcement test proving the automation identity cannot push/merge to `main` with a failing required check and cannot bypass the ruleset.
+
+Until those controls are implemented and evidenced in `ksp-platform`, production activation remains fail-closed.
+
 ## A2 — Terraform PR credential boundary
 
 Untrusted PR CI is credential-free. It may perform formatting, parsing, validation that does not require provider credentials, and static policy checks only.
@@ -100,4 +117,4 @@ Paid GitHub security products may be added later but are not a production prereq
 
 ## Apply freeze
 
-Terraform apply is prohibited until A2 and A3 are implemented in the target production repository and their named tests pass. Production promotion is prohibited until A1, A4, and A5 are also qualified.
+Terraform apply is prohibited until A2 and A3 are implemented in the target production repository and their named tests pass. Production promotion is prohibited until A1, N4, A4, and A5 are also qualified.
