@@ -36,6 +36,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install hash-pinned CI parser dependency
+        shell: bash
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-deps --only-binary=:all: \
+            --require-hashes -r ksp-bootstrap/requirements-ci.txt
+
       - name: Validate umbrella
         shell: bash
         run: bash scripts/ci/validate_devops_umbrella.sh

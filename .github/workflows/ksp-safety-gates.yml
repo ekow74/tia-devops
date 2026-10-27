@@ -26,6 +26,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Install hash-pinned CI parser dependency
+        shell: bash
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-deps --only-binary=:all: \
+            --require-hashes -r ksp-bootstrap/requirements-ci.txt
+
       - name: Gate-binding regression tests (ME1/ME2/R1/R2)
         shell: bash
         run: python3 -m unittest discover -s ksp-bootstrap/tests -p 'test_*.py' -v

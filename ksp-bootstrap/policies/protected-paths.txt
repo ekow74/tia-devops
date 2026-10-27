@@ -15,6 +15,10 @@ database/**
 migrations/**
 .github/workflows/**
 .github/CODEOWNERS
+.github/zizmor.yml
+.github/zizmor.yaml
+zizmor.yml
+zizmor.yaml
 scripts/ci/validate_devops_umbrella.sh
 platform/terraform/**
 platform/compose/**
@@ -33,5 +37,6 @@ tests/fixtures/**
 # Bootstrap/reference implementation surfaces
 ksp-bootstrap/governance/**
 ksp-bootstrap/policies/**
+ksp-bootstrap/requirements-ci.txt
 ksp-bootstrap/scripts/ci/**
 ksp-bootstrap/tests/**
