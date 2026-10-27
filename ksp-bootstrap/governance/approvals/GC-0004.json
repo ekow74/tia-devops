@@ -1,0 +1,20 @@
+{
+  "approval_consumed_by": "GC-0004",
+  "approval_id": "CLAUDE-GC-0004-S01-2026-10-27",
+  "approved_gate_change_id": "GC-0004",
+  "approved_head_sha": "3edcee1243c3feb952aee1bb5fb776c82f895df1",
+  "approved_scope": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/ksp-safety-gates.yml",
+    ".github/workflows/ksp-gate-authority.yml",
+    "scripts/ci/validate_devops_umbrella.sh",
+    "ksp-bootstrap/scripts/ci/check_gate_integrity.py",
+    "ksp-bootstrap/scripts/ci/check_pull_request_target_exceptions.py",
+    "ksp-bootstrap/tests/test_gate_authority.py",
+    "ksp-bootstrap/tests/test_gc0004_hardening.py"
+  ],
+  "approved_threshold": "ME1 rename protection, R1 trigger-form detection, template-injection removal, and blocking High-severity workflow audit",
+  "decision": "APPROVED",
+  "review_reference": "KSP_GateChange_GC0004_REVIEW_v1.0_2026-10-27",
+  "review_revision_id": "gdrive:163SKf38lmsPoAnWFj3-uAEODPugen-dbawwDNYCN9n4@2026-10-27T10:45:52.205Z"
+}
