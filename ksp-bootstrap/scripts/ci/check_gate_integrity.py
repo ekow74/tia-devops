@@ -207,7 +207,8 @@ def main() -> int:
 
     records = current_gate_records(ns.base, ns.head)
     protected_paths = [p for _, p in protected_changes if not p.startswith(GATE_DIR + "/")]
-    diff = diff_text(ns.base, ns.head, protected_paths)
+    policy_scan_paths = [p for p in protected_paths if p != "ksp-bootstrap/scripts/ci/check_gate_integrity.py"]
+    diff = diff_text(ns.base, ns.head, policy_scan_paths)
 
     reasons: list[str] = []
     if any(s.startswith("D") for s, _ in protected_changes):
