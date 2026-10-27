@@ -9,10 +9,11 @@
   "scope": [
     ".github/workflows/ksp-safety-gates.yml",
     ".github/workflows/ci.yml",
+    "ksp-bootstrap/governance/decisions/D-0023.json",
     "ksp-bootstrap/policies/**",
     "ksp-bootstrap/scripts/ci/**",
     "ksp-bootstrap/tests/**",
     "ksp-bootstrap/KSP_CICD_SECURITY_BASELINE_S02.md"
   ],
-  "note": "The PR cannot authorize itself. Authoritative approval must exist as a trusted base-branch ledger receipt under ksp-bootstrap/governance/approvals/GC-0001.json and be bound to this GateChange, scope, threshold, review reference, and exact PR head SHA."
+  "note": "The PR cannot authorize itself. Authoritative approval must exist as a trusted base-branch ledger receipt under ksp-bootstrap/governance/approvals/GC-0001.json and be bound to this GateChange, scope, threshold, review reference, and exact PR head SHA. D-0023 explicitly accepts this process-only enforcement boundary for tia-devops and forbids carrying that risk acceptance into ksp-platform."
 }
