@@ -11,6 +11,7 @@
     "governance/workflow-exceptions/pull-request-target.txt",
     "ksp-bootstrap/scripts/ci/check_gate_integrity.py",
     "ksp-bootstrap/scripts/ci/check_pull_request_target_exceptions.py",
+    "ksp-bootstrap/tests/test_gate_authority.py",
     "ksp-bootstrap/tests/test_gc0004_hardening.py",
     "ksp-bootstrap/tests/test_gc0005_hardening.py",
     "ksp-bootstrap/tests/fixtures/zizmor/unsafe_pull_request_target.yml"
