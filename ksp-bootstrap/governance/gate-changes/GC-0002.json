@@ -1,0 +1,19 @@
+{
+  "gate_change_id": "GC-0002",
+  "decision_log_id": "D-0020",
+  "reason": "Close Claude S03 missed-earlier findings ME1 and ME2 before any protected-path merge; N4 owner decision D-0023 accepts process-enforced ledger/merge integrity only for non-production tia-devops and requires technical enforcement before ksp-platform protected-path merges.",
+  "reviewer_kind": "CLAUDE",
+  "review_status": "PENDING_EXTERNAL_BASE_LEDGER",
+  "review_reference": "KSP_GateChange_PR2_REVIEW_v4.0_2026-10-27",
+  "approval_threshold": "ME1 approval-to-change binding and ME2 validator-path protection",
+  "scope": [
+    ".github/workflows/ksp-safety-gates.yml",
+    "ksp-bootstrap/policies/protected-paths.txt",
+    "ksp-bootstrap/scripts/ci/check_gate_integrity.py",
+    "ksp-bootstrap/scripts/ci/verify_gatechange_readback.py",
+    "ksp-bootstrap/scripts/ci/classify_tf_plan.py",
+    "ksp-bootstrap/scripts/ci/terraform_real_plan_probe.sh",
+    "ksp-bootstrap/tests/test_gate_integrity.py"
+  ],
+  "note": "The PR cannot authorize itself. Authoritative approval must exist as a trusted base-branch ledger receipt under ksp-bootstrap/governance/approvals/GC-0002.json and be bound to this GateChange, scope, threshold, review reference, and exact PR head SHA."
+}

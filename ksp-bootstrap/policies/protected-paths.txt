@@ -1,0 +1,35 @@
+# Paths whose changes can weaken KSP safety/release gates.
+# In the production repository these paths must also be protected by a GitHub
+# ruleset that the Governor identity cannot approve, merge, or bypass.
+packages/schemas/**
+packages/validators/**
+packages/policies/**
+governance/**
+domain-packs/*/fixtures/**
+domain-packs/*/validators/**
+knowledge-packs/qualification/**
+qa/mutation/**
+qa/retrieval/**
+qa/database/**
+database/**
+migrations/**
+.github/workflows/**
+platform/terraform/**
+platform/compose/**
+platform/ansible/**
+config/*threshold*
+# Canonical Knowledge/clinical validator surfaces (ME2)
+src/ksp_knowledge/safety.py
+src/ksp_knowledge/quantity.py
+src/ksp_knowledge/governance.py
+src/ksp_knowledge/revocation.py
+src/ksp_knowledge/pack.py
+src/ksp_knowledge/release.py
+src/ksp_knowledge/platform.py
+tests/**
+tests/fixtures/**
+# Bootstrap/reference implementation surfaces
+ksp-bootstrap/governance/**
+ksp-bootstrap/policies/**
+ksp-bootstrap/scripts/ci/**
+ksp-bootstrap/tests/**

@@ -1,0 +1,174 @@
+name: KSP S02 Safety Gates
+
+on:
+  pull_request:
+    paths:
+      - 'ksp-bootstrap/**'
+      - 'packages/validators/**'
+      - 'packages/policies/**'
+      - 'governance/**'
+      - 'domain-packs/**'
+      - 'knowledge-packs/qualification/**'
+      - 'qa/mutation/**'
+      - 'qa/retrieval/**'
+      - 'platform/terraform/**'
+      - 'platform/compose/**'
+      - 'platform/ansible/**'
+      - 'src/ksp_knowledge/**'
+      - 'tests/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ksp-s02-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  static-safety:
+    name: Credential-free static safety gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      KSP_PR_PATH: untrusted
+      KSP_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      KSP_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Gate-binding regression tests (ME1/ME2)
+        shell: bash
+        run: python3 -m unittest discover -s ksp-bootstrap/tests -p 'test_*.py' -v
+
+      - name: Terraform static policy - production paths
+        shell: bash
+        run: python3 ksp-bootstrap/scripts/ci/check_terraform_static.py
+
+      - name: Terraform policy fixtures
+        shell: bash
+        run: |
+          python3 ksp-bootstrap/scripts/ci/check_terraform_static.py ksp-bootstrap/tests/fixtures/terraform/safe
+          if python3 ksp-bootstrap/scripts/ci/check_terraform_static.py ksp-bootstrap/tests/fixtures/terraform/unsafe_external; then
+            echo 'unsafe external-data fixture unexpectedly passed' >&2
+            exit 1
+          fi
+          if python3 ksp-bootstrap/scripts/ci/check_terraform_static.py ksp-bootstrap/tests/fixtures/terraform/unsafe_unpinned_module; then
+            echo 'unsafe unpinned-module fixture unexpectedly passed' >&2
+            exit 1
+          fi
+          echo 'terraform-policy-fixtures: PASS'
+
+      - name: Install pinned Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.6
+          terraform_wrapper: false
+
+      - name: Terraform HCL formatting/syntax
+        shell: bash
+        run: terraform -chdir=ksp-bootstrap/terraform fmt -check -recursive
+
+      - name: Real terraform show -json indexed-address probe
+        shell: bash
+        run: bash ksp-bootstrap/scripts/ci/terraform_real_plan_probe.sh
+
+      - name: Compose published-port policy - production paths
+        shell: bash
+        run: python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py
+
+      - name: Compose binding fixtures
+        shell: bash
+        run: |
+          python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py ksp-bootstrap/tests/fixtures/compose/safe.yaml
+          if python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py ksp-bootstrap/tests/fixtures/compose/unsafe.yaml; then
+            echo 'unsafe 0.0.0.0 fixture unexpectedly passed' >&2
+            exit 1
+          fi
+          if python3 ksp-bootstrap/scripts/ci/check_compose_bindings.py ksp-bootstrap/tests/fixtures/compose/unsafe_unbound.yaml; then
+            echo 'unsafe unbound fixture unexpectedly passed' >&2
+            exit 1
+          fi
+          echo 'compose-policy-fixtures: PASS'
+
+      - name: Prove credential-free PR path
+        shell: bash
+        run: |
+          test -z "${CNTB_OAUTH2_CLIENT_ID:-}"
+          test -z "${CNTB_OAUTH2_CLIENT_SECRET:-}"
+          test -z "${CNTB_OAUTH2_USER:-}"
+          test -z "${CNTB_OAUTH2_PASS:-}"
+          test -z "${TFC_TOKEN:-}"
+          test -z "${TF_TOKEN_app_terraform_io:-}"
+          test -z "${CONTABO_CLIENT_ID:-}"
+          test -z "${CONTABO_CLIENT_SECRET:-}"
+          echo 'credential-free-pr-path: PASS'
+
+  gate-integrity:
+    name: Gate integrity / independent approval
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout trusted base only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Evaluate gate from isolated checker
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_SHA='${{ github.event.pull_request.base.sha }}'
+          HEAD_SHA='${{ github.event.pull_request.head.sha }}'
+          PR_NUMBER='${{ github.event.pull_request.number }}'
+          BOOTSTRAP_ANCHOR='b9a7a3fa8c787a57ec862f4150c156691928ff05'
+          CHECKER='ksp-bootstrap/scripts/ci/check_gate_integrity.py'
+          POLICY='ksp-bootstrap/policies/protected-paths.txt'
+          TMP_DIR="${RUNNER_TEMP}/ksp-gate-integrity"
+          TMP_CHECKER="${TMP_DIR}/check_gate_integrity.py"
+          mkdir -p "${TMP_DIR}"
+
+          # The worktree remains on the trusted base. Fetch only the head object
+          # when checkout --fetch-depth=0 did not already bring it in.
+          if ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "${HEAD_SHA}"
+          fi
+          git cat-file -e "${HEAD_SHA}^{commit}"
+
+          BOOTSTRAP_ARGS=()
+          if git cat-file -e "${BASE_SHA}:${CHECKER}" 2>/dev/null && \
+             git cat-file -e "${BASE_SHA}:${POLICY}" 2>/dev/null; then
+            git show "${BASE_SHA}:${CHECKER}" > "${TMP_CHECKER}"
+            POLICY_REF="${BASE_SHA}"
+            echo "gate-integrity-source: trusted base ${BASE_SHA}"
+          else
+            # One-time PR #2 bootstrap: the base may move forward from the
+            # pinned anchor only through approval-ledger receipt commits.
+            # The isolated head checker enforces that ancestry/path condition
+            # before reading those receipts from BASE_SHA.
+            if [[ "${PR_NUMBER}" != '2' ]]; then
+              echo 'gate-integrity: FAIL' >&2
+              echo ' - trusted base checker/policy missing outside bootstrap PR #2' >&2
+              exit 1
+            fi
+            git show "${HEAD_SHA}:${CHECKER}" > "${TMP_CHECKER}"
+            git cat-file -e "${HEAD_SHA}:${POLICY}"
+            POLICY_REF="${HEAD_SHA}"
+            BOOTSTRAP_ARGS=(--bootstrap-anchor "${BOOTSTRAP_ANCHOR}")
+            echo "gate-integrity-source: isolated bootstrap checker for PR #2; anchor ${BOOTSTRAP_ANCHOR}"
+          fi
+
+          python3 -I "${TMP_CHECKER}" \
+            --repo-root "${GITHUB_WORKSPACE}" \
+            --base "${BASE_SHA}" \
+            --head "${HEAD_SHA}" \
+            --policy-ref "${POLICY_REF}" \
+            "${BOOTSTRAP_ARGS[@]}"

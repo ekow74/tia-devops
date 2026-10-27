@@ -1,0 +1,23 @@
+{
+  "decision_id": "D-0023",
+  "title": "tia-devops gate-enforcement boundary",
+  "date": "2026-10-27",
+  "status": "ACCEPTED",
+  "owner_decision": "A",
+  "scope": "tia-devops only",
+  "decision": "Accept process-enforced approval, ledger, CI, and merge integrity for tia-devops because this repository is a non-production template/reference repository with no production deployment authority. This limitation does not block approval of the tia-devops bootstrap.",
+  "accepted_risk": "Within tia-devops, approval files and CI results are auditable process evidence rather than an unbypassable authorization boundary. A repository administrator or other sufficiently privileged actor could still write an approval artifact, bypass a failing check, or merge directly because GitHub branch/ruleset enforcement is not the security boundary here.",
+  "production_boundary": "This risk acceptance MUST NOT transfer to ksp-platform or any repository with production deployment, promotion, secrets, or protected knowledge-pack authority.",
+  "ksp_platform_activation_preconditions": [
+    "Protect main with a GitHub ruleset or branch protection that applies to administrators unless an explicitly documented emergency path is approved.",
+    "Require pull requests for changes to main; no routine direct pushes.",
+    "Require the named KSP safety/gate status checks to pass before merge.",
+    "Reserve merge authority for the designated human owner/maintainer; automation identities must not have merge or ruleset-bypass authority.",
+    "Use a dedicated automation identity with no repository administration permission and no branch/ruleset bypass permission.",
+    "Disallow force pushes and deletion of main.",
+    "Treat approval/ledger artifacts as evidence only; they must not by themselves grant GitHub merge authorization.",
+    "Run and retain a negative enforcement test proving the automation identity cannot merge or push to main when a required check fails and cannot bypass the ruleset."
+  ],
+  "activation_block": "Until every ksp-platform activation precondition above is implemented and evidenced, protected-path merge authority, Terraform apply, production promotion, and production deployment remain prohibited.",
+  "review_context": "KSP_GateChange_PR2_REVIEW_v4.0_2026-10-27"
+}

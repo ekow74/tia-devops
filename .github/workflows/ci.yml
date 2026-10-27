@@ -6,6 +6,7 @@ on:
       - '.github/**'
       - 'scripts/**'
       - 'catalog/**'
+      - 'ksp-bootstrap/**'
       - 'KSP_DEVOPS_UMBRELLA.md'
   push:
     branches: [main]
@@ -13,6 +14,7 @@ on:
       - '.github/**'
       - 'scripts/**'
       - 'catalog/**'
+      - 'ksp-bootstrap/**'
       - 'KSP_DEVOPS_UMBRELLA.md'
   workflow_dispatch:
 
@@ -56,15 +58,29 @@ jobs:
         with:
           advanced-security: true
 
-  dependency-review:
-    name: Dependency change gate
+  dependency-vulnerability-review:
+    name: KSP bootstrap vulnerability gate (zero-cost fallback)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 12
     permissions:
       contents: read
     steps:
-      - name: Review dependency changes
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fail-on-severity: high
+          persist-credentials: false
+
+      - name: Scan KSP bootstrap dependency surface
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: ksp-bootstrap
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+# The historical umbrella contains unrelated training/reference material and is
+# scanned by security-deep.yml. The future private ksp-platform repository will
+# scan its complete production tree here because it will contain no legacy corpus.
