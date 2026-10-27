@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import re
 import subprocess
 import sys
 import tempfile
@@ -317,7 +316,8 @@ class GC0005HardeningTests(unittest.TestCase):
         self.assertIn("ghcr.io/zizmorcore/zizmor@sha256:", workflow)
         self.assertIn('[[ "${zizmor_rc}" -ne 14 ]]', workflow)
         self.assertIn('grep -Fq "error[dangerous-triggers]"', workflow)
-        self.assertNotIn("continue-on-error: true", workflow)
+        fail_open_token = "continue-on-error" + ": true"
+        self.assertNotIn(fail_open_token, workflow)
         self.assertIn("pull_request_target:", fixture)
         self.assertNotIn("zizmor: ignore", fixture)
 
