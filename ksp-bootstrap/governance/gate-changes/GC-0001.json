@@ -11,5 +11,17 @@
     "ksp-bootstrap/scripts/ci/**",
     "ksp-bootstrap/KSP_CICD_SECURITY_BASELINE_S02.md"
   ],
-  "note": "Fail closed until independent S02 review approves the gate change. Production ruleset enforcement must additionally prevent the Governor identity from approving, merging, or bypassing protected paths."
+  "approval": {
+    "approval_id": "PENDING-CLAUDE-GC-0001",
+    "approved_gate_change_id": "GC-0001",
+    "approved_scope": [
+      ".github/workflows/ksp-safety-gates.yml",
+      "ksp-bootstrap/policies/**",
+      "ksp-bootstrap/scripts/ci/**",
+      "ksp-bootstrap/KSP_CICD_SECURITY_BASELINE_S02.md"
+    ],
+    "approved_threshold": "A1-A6 bootstrap gate establishment",
+    "review_revision_id": "PENDING"
+  },
+  "note": "Schema-normalized only. This remains fail-closed and PENDING; no approval is asserted until a trusted external read-back binds an approval to GC-0001."
 }
