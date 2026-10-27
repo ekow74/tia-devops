@@ -1,0 +1,19 @@
+{
+  "approval_consumed_by": "GC-0002",
+  "approval_id": "CLAUDE-GC-0002-S04-2026-10-27",
+  "approved_gate_change_id": "GC-0002",
+  "approved_head_sha": "53b6b3df2a5fc8c64f55b33f41e1729c34b26d39",
+  "approved_scope": [
+    ".github/workflows/ksp-safety-gates.yml",
+    "ksp-bootstrap/policies/protected-paths.txt",
+    "ksp-bootstrap/scripts/ci/check_gate_integrity.py",
+    "ksp-bootstrap/scripts/ci/verify_gatechange_readback.py",
+    "ksp-bootstrap/scripts/ci/classify_tf_plan.py",
+    "ksp-bootstrap/scripts/ci/terraform_real_plan_probe.sh",
+    "ksp-bootstrap/tests/test_gate_integrity.py"
+  ],
+  "approved_threshold": "ME1 approval-to-change binding and ME2 validator-path protection",
+  "decision": "APPROVED",
+  "review_reference": "KSP_GateChange_PR2_REVIEW_v4.0_2026-10-27",
+  "review_revision_id": "gdrive:1sRrBqeZOKZgY-wd1XHNoXtbk9v5HqiW15rDDqfxbV_I@2026-10-27T07:42:23.636Z"
+}
