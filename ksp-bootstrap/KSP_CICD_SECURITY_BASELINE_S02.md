@@ -20,18 +20,28 @@ The repo ruleset is an external control and cannot be considered complete until 
 
 Owner decision `D-0023` selects option A for `tia-devops` only. `tia-devops` is a non-production template/reference repository, so its GateChange records, approval ledger, and CI checks are process and audit controls; this repository does **not** claim that those artifacts are an unbypassable GitHub authorization boundary. That limitation does not block approval of the bootstrap.
 
+GC-0003 hardens the reference implementation in two ways:
+
+- **R1 trigger coverage:** the ordinary KSP safety workflow runs on every pull request; protected changes cannot avoid safety CI through a `paths:` filter.
+- **R2 trusted gate authority:** the merge-authoritative GateChange check is a separate `pull_request_target` workflow whose definition and checker come from trusted base state. It resolves the live default-branch commit, fetches the PR head only as a Git object, verifies the fetched head SHA, and never checks out, sources, imports, or executes PR-head code.
+- The former `pull_request` GateChange job remains only as an advisory mirror. It is not a production authorization boundary.
+- `.github/CODEOWNERS`, workflow files, protected-path policy, and the gate-integrity checker are designated human-owned control surfaces.
+
 This risk acceptance MUST NOT transfer to `ksp-platform`. Before `ksp-platform` receives protected-path merge authority, Terraform apply capability, production promotion authority, production secrets, or production deployment authority, all of the following are mandatory:
 
 - protect `main` with GitHub ruleset/branch-protection enforcement;
 - require pull requests for routine changes to `main`;
-- require the named KSP safety/gate checks to pass before merge;
+- require the **authoritative KSP workflow itself** through a ruleset/pinned-workflow control; a same-named status check is insufficient;
+- execute the authoritative gate from trusted base or pinned workflow code only and never execute PR-head code in that authority workflow;
+- enforce CODEOWNERS review by the designated human owner/maintainer for `.github/workflows/**`, `.github/CODEOWNERS`, the protected-path policy, and the gate-integrity checker;
 - reserve merge authority for the designated human owner/maintainer;
 - use a dedicated automation identity with no repository administration, merge, or ruleset-bypass authority;
 - disallow force pushes and deletion of `main`;
 - treat approval/ledger files as evidence only, never as GitHub merge authorization by themselves;
-- run and retain a negative enforcement test proving the automation identity cannot push/merge to `main` with a failing required check and cannot bypass the ruleset.
+- run and retain negative enforcement tests proving the automation identity cannot push/merge to `main` with a failing required check or bypass the ruleset;
+- include negative cases where a PR removes or renames the trusted gate workflow/job and where a PR adds a same-named passing job; both must remain unmergeable.
 
-Until those controls are implemented and evidenced in `ksp-platform`, production activation remains fail-closed.
+For a private `ksp-platform` repository, the GitHub plan or alternative enforcement design needed to satisfy those controls requires a separate Owner decision. GC-0003 authorizes no spend. Until the control set is technically enforced and evidenced, production activation remains fail-closed.
 
 ## A2 — Terraform PR credential boundary
 
