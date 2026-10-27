@@ -1,0 +1,20 @@
+{
+  "approval_consumed_by": "GC-0005",
+  "approval_id": "CLAUDE-GC-0005-S02-2026-10-27",
+  "approved_gate_change_id": "GC-0005",
+  "approved_head_sha": "db74da60759003e6648087b5f2abf60743edc3ad",
+  "approved_scope": [
+    ".github/workflows/ci.yml",
+    "governance/workflow-exceptions/pull-request-target.txt",
+    "ksp-bootstrap/scripts/ci/check_gate_integrity.py",
+    "ksp-bootstrap/scripts/ci/check_pull_request_target_exceptions.py",
+    "ksp-bootstrap/tests/test_gate_authority.py",
+    "ksp-bootstrap/tests/test_gc0004_hardening.py",
+    "ksp-bootstrap/tests/test_gc0005_hardening.py",
+    "ksp-bootstrap/tests/fixtures/zizmor/unsafe_pull_request_target.yml"
+  ],
+  "approved_threshold": "N1 complete trigger/suppression detection with rule-scoped exceptions, m1 exact trusted-base SHA binding, and m2 exact zizmor High failure proof",
+  "decision": "APPROVED",
+  "review_reference": "KSP_GateChange_GC0005_REVIEW_v2.0_2026-10-27",
+  "review_revision_id": "gdrive:1cSn2hkYJ6ao8bt9NMUH_0bUTIopx3SFV@2026-10-27T12:09:14.854Z"
+}
