@@ -61,29 +61,33 @@ jobs:
           min-severity: high
           version: v1.30.1
 
-      - name: Prove zizmor blocks an unsuppressed HIGH fixture
-        id: zizmor-negative
-        continue-on-error: true
-        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
-        with:
-          inputs: ksp-bootstrap/tests/fixtures/zizmor/unsafe_pull_request_target.yml
-          advanced-security: false
-          annotations: false
-          min-severity: high
-          version: v1.30.1
-
-      - name: Assert negative zizmor fixture was blocked
-        if: always()
+      - name: Prove zizmor emits the expected HIGH dangerous-triggers failure
         shell: bash
         env:
-          ZIZMOR_NEGATIVE_OUTCOME: ${{ steps.zizmor-negative.outcome }}
+          ZIZMOR_IMAGE: ghcr.io/zizmorcore/zizmor@sha256:a2eb396d886c053073405c7a980f2139ba2248ec172243cfa3841e57196e8101
+          ZIZMOR_FIXTURE: ksp-bootstrap/tests/fixtures/zizmor/unsafe_pull_request_target.yml
         run: |
           set -euo pipefail
-          if [[ "${ZIZMOR_NEGATIVE_OUTCOME}" != "failure" ]]; then
-            echo "zizmor-negative-proof: FAIL - expected failure, got ${ZIZMOR_NEGATIVE_OUTCOME}" >&2
+          output="${RUNNER_TEMP}/zizmor-negative.log"
+          set +e
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace:ro" \
+            -w /workspace \
+            "${ZIZMOR_IMAGE}" \
+            --min-severity high \
+            "${ZIZMOR_FIXTURE}" >"${output}" 2>&1
+          zizmor_rc=$?
+          set -e
+          cat "${output}"
+          if [[ "${zizmor_rc}" -ne 14 ]]; then
+            echo "zizmor-negative-proof: FAIL - expected exit 14, got ${zizmor_rc}" >&2
             exit 1
           fi
-          echo 'zizmor-negative-proof: PASS'
+          if ! grep -Fq "error[dangerous-triggers]" "${output}"; then
+            echo "zizmor-negative-proof: FAIL - dangerous-triggers finding missing" >&2
+            exit 1
+          fi
+          echo 'zizmor-negative-proof: PASS - exact HIGH finding and exit code observed'
 
   dependency-vulnerability-review:
     name: KSP bootstrap vulnerability gate (zero-cost fallback)
