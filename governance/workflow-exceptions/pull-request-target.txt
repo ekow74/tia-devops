@@ -1,3 +1,5 @@
-# Exact workflow paths approved to use pull_request_target.
-# Entries are reviewed GateChange-controlled exceptions, not patterns.
-.github/workflows/ksp-gate-authority.yml
+# Exact workflow/rule pairs approved for exceptional workflow security constructs.
+# Format: <workflow-path> <rule-id>
+# Entries are GateChange-controlled exact exceptions, never patterns.
+.github/workflows/ksp-gate-authority.yml pull_request_target
+.github/workflows/ksp-gate-authority.yml zizmor:dangerous-triggers
