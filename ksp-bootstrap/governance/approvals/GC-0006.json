@@ -1,0 +1,18 @@
+{
+  "approval_consumed_by": "GC-0006",
+  "approval_id": "CLAUDE-GC-0006-S01-2026-10-27",
+  "approved_gate_change_id": "GC-0006",
+  "approved_head_sha": "300903eeb33a56ae4fea63dd707dbf4e1128d1d0",
+  "approved_scope": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/ksp-safety-gates.yml",
+    "ksp-bootstrap/policies/protected-paths.txt",
+    "ksp-bootstrap/requirements-ci.txt",
+    "ksp-bootstrap/scripts/ci/check_pull_request_target_exceptions.py",
+    "ksp-bootstrap/tests/test_gc0006_hardening.py"
+  ],
+  "approved_threshold": "N3 real YAML trigger parsing, m1 zizmor configuration protection, and m2 approval-SHA rollout note",
+  "decision": "APPROVED",
+  "review_reference": "KSP_GateChange_GC0006_REVIEW_v1.0_2026-10-27",
+  "review_revision_id": "gdrive:1iD13B0L1DL5Zlxcp0CpCAgMdAcnDQpiNFa6IDdRi5oc@2026-10-27T14:05:26.233Z"
+}
