@@ -4,7 +4,7 @@
   "reason": "Close Claude S03 missed-earlier findings ME1 and ME2 before any protected-path merge.",
   "reviewer_kind": "CLAUDE",
   "review_status": "PENDING_EXTERNAL_BASE_LEDGER",
-  "review_reference": "KSP_Taxonomy_Knowledge_Prototype_REVIEW_v3.0_2026-10-26",
+  "review_reference": "KSP_GateChange_PR2_REVIEW_v1.0_2026-10-27",
   "approval_threshold": "ME1 approval-to-change binding and ME2 validator-path protection",
   "scope": [
     ".github/workflows/ksp-safety-gates.yml",
