@@ -33,6 +33,8 @@ jobs:
     timeout-minutes: 15
     env:
       KSP_PR_PATH: untrusted
+      KSP_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      KSP_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Checkout full history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,38 +109,66 @@ jobs:
           test -z "${CONTABO_CLIENT_SECRET:-}"
           echo 'credential-free-pr-path: PASS'
 
-      - name: Gate integrity / independent approval
-        if: github.event_name == 'pull_request'
+  gate-integrity:
+    name: Gate integrity / independent approval
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout trusted base only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Evaluate gate from isolated checker
         shell: bash
         run: |
           set -euo pipefail
           BASE_SHA='${{ github.event.pull_request.base.sha }}'
           HEAD_SHA='${{ github.event.pull_request.head.sha }}'
+          PR_NUMBER='${{ github.event.pull_request.number }}'
+          BOOTSTRAP_ANCHOR='b9a7a3fa8c787a57ec862f4150c156691928ff05'
           CHECKER='ksp-bootstrap/scripts/ci/check_gate_integrity.py'
           POLICY='ksp-bootstrap/policies/protected-paths.txt'
+          TMP_DIR="${RUNNER_TEMP}/ksp-gate-integrity"
+          TMP_CHECKER="${TMP_DIR}/check_gate_integrity.py"
+          mkdir -p "${TMP_DIR}"
 
-          # After bootstrap, validator authority comes from the trusted PR base,
-          # never from files supplied by the PR head.  Overwriting only the
-          # worktree copies preserves the repository object database used by
-          # git diff/show while preventing a modified head checker/policy from
-          # deciding its own result.
+          # The worktree remains on the trusted base. Fetch only the head object
+          # when checkout --fetch-depth=0 did not already bring it in.
+          if ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "${HEAD_SHA}"
+          fi
+          git cat-file -e "${HEAD_SHA}^{commit}"
+
+          BOOTSTRAP_ARGS=()
           if git cat-file -e "${BASE_SHA}:${CHECKER}" 2>/dev/null && \
              git cat-file -e "${BASE_SHA}:${POLICY}" 2>/dev/null; then
-            git show "${BASE_SHA}:${CHECKER}" > "${CHECKER}"
-            git show "${BASE_SHA}:${POLICY}" > "${POLICY}"
+            git show "${BASE_SHA}:${CHECKER}" > "${TMP_CHECKER}"
+            POLICY_REF="${BASE_SHA}"
             echo "gate-integrity-source: trusted base ${BASE_SHA}"
           else
-            # One-time bootstrap exception: PR #2 establishes the checker and
-            # policy on a base that does not yet contain either file.
-            if [[ '${{ github.event.pull_request.number }}' != '2' || \
-                  "${BASE_SHA}" != 'b9a7a3fa8c787a57ec862f4150c156691928ff05' ]]; then
+            # One-time PR #2 bootstrap: the base may move forward from the
+            # pinned anchor only through approval-ledger receipt commits.
+            # The isolated head checker enforces that ancestry/path condition
+            # before reading those receipts from BASE_SHA.
+            if [[ "${PR_NUMBER}" != '2' ]]; then
               echo 'gate-integrity: FAIL' >&2
-              echo ' - trusted base checker/policy missing outside bootstrap exception' >&2
+              echo ' - trusted base checker/policy missing outside bootstrap PR #2' >&2
               exit 1
             fi
-            echo "gate-integrity-source: bootstrap head exception for PR #2"
+            git show "${HEAD_SHA}:${CHECKER}" > "${TMP_CHECKER}"
+            git cat-file -e "${HEAD_SHA}:${POLICY}"
+            POLICY_REF="${HEAD_SHA}"
+            BOOTSTRAP_ARGS=(--bootstrap-anchor "${BOOTSTRAP_ANCHOR}")
+            echo "gate-integrity-source: isolated bootstrap checker for PR #2; anchor ${BOOTSTRAP_ANCHOR}"
           fi
 
-          python3 "${CHECKER}" \
+          python3 -I "${TMP_CHECKER}" \
+            --repo-root "${GITHUB_WORKSPACE}" \
             --base "${BASE_SHA}" \
-            --head "${HEAD_SHA}"
+            --head "${HEAD_SHA}" \
+            --policy-ref "${POLICY_REF}" \
+            "${BOOTSTRAP_ARGS[@]}"

@@ -11,8 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[3]
-POLICY = ROOT / "ksp-bootstrap/policies/protected-paths.txt"
+POLICY_PATH = "ksp-bootstrap/policies/protected-paths.txt"
 GATE_DIR = "ksp-bootstrap/governance/gate-changes"
 APPROVAL_DIR = "ksp-bootstrap/governance/approvals"
 
@@ -26,13 +25,34 @@ SUSPICIOUS_ADDITIONS = (
 )
 THRESHOLD_RE = re.compile(r"(?i)(threshold|minimum|min_|recall|coverage)[^0-9-]*(-?\d+(?:\.\d+)?)")
 
+ROOT = Path.cwd()
+_POLICY_REF: str | None = None
+
+
+def configure_repo(root: str | Path | None = None, policy_ref: str | None = None) -> None:
+    global ROOT, _POLICY_REF
+    if root is None:
+        root_text = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], text=True, stderr=subprocess.STDOUT
+        ).strip()
+        ROOT = Path(root_text)
+    else:
+        ROOT = Path(root).resolve()
+    _POLICY_REF = policy_ref
+
 
 def run(*args: str) -> str:
     return subprocess.check_output(args, cwd=ROOT, text=True, stderr=subprocess.STDOUT)
 
 
-def patterns() -> list[str]:
-    return [x.strip() for x in POLICY.read_text().splitlines() if x.strip() and not x.startswith("#")]
+def git_show(ref: str, path: str) -> str:
+    return run("git", "show", f"{ref}:{path}")
+
+
+def patterns(policy_ref: str | None = None) -> list[str]:
+    ref = policy_ref if policy_ref is not None else _POLICY_REF
+    text = git_show(ref, POLICY_PATH) if ref else (ROOT / POLICY_PATH).read_text()
+    return [x.strip() for x in text.splitlines() if x.strip() and not x.startswith("#")]
 
 
 def path_matches(path: str, pattern: str) -> bool:
@@ -41,8 +61,8 @@ def path_matches(path: str, pattern: str) -> bool:
     return fnmatch.fnmatch(path, pattern)
 
 
-def protected(path: str) -> bool:
-    return any(path_matches(path, p) for p in patterns())
+def protected(path: str, policy_ref: str | None = None) -> bool:
+    return any(path_matches(path, p) for p in patterns(policy_ref))
 
 
 def changed_files(base: str, head: str) -> list[tuple[str, str]]:
@@ -66,11 +86,16 @@ def _load_json(text: str, source: str) -> dict[str, Any]:
 
 
 def current_gate_records(base: str, head: str) -> list[dict[str, Any]]:
+    """Read changed GateChange records from the named head object, never the worktree."""
     records: list[dict[str, Any]] = []
     for status, path in changed_files(base, head):
         if not path.startswith(GATE_DIR + "/") or not path.endswith(".json") or status.startswith("D"):
             continue
-        records.append(_load_json((ROOT / path).read_text(), path))
+        try:
+            text = git_show(head, path)
+        except subprocess.CalledProcessError as exc:
+            raise ValueError(f"cannot read GateChange record from {head}:{path}") from exc
+        records.append(_load_json(text, f"{head}:{path}"))
     return records
 
 
@@ -85,11 +110,37 @@ def base_approval_records(base: str) -> list[dict[str, Any]]:
         if not path.endswith(".json"):
             continue
         try:
-            text = run("git", "show", f"{base}:{path}")
+            text = git_show(base, path)
         except subprocess.CalledProcessError:
             continue
         records.append(_load_json(text, f"{base}:{path}"))
     return records
+
+
+def bootstrap_base_is_receipts_only(anchor: str, base: str) -> bool:
+    """Allow PR #2 bootstrap bases only when they descend from anchor via approval receipts only."""
+    try:
+        subprocess.check_output(
+            ["git", "merge-base", "--is-ancestor", anchor, base],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.STDOUT,
+        )
+    except subprocess.CalledProcessError:
+        return False
+
+    out = run("git", "diff", "--name-status", f"{anchor}..{base}")
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2:
+            return False
+        status = parts[0]
+        paths = parts[1:]
+        if status.startswith(("D", "R", "C")):
+            return False
+        if any(not p.startswith(APPROVAL_DIR + "/") for p in paths):
+            return False
+    return True
 
 
 def _scope_covers(path: str, scope: list[str]) -> bool:
@@ -174,9 +225,8 @@ def validate_gatechange_records(
         approved_scope = approval.get("approved_scope")
         if not isinstance(approved_scope, list) or not approved_scope:
             raise ValueError(f"GateChange {gid}: approved_scope must be a non-empty list")
-        for path_pattern in scope:
-            if not any(path_matches(path_pattern, allowed) or path_matches(allowed, path_pattern) for allowed in approved_scope):
-                raise ValueError(f"GateChange {gid}: claimed scope {path_pattern!r} is not externally approved")
+        if approved_scope != scope:
+            raise ValueError(f"GateChange {gid}: approved_scope must exactly equal the GateChange scope")
         coverage.append([str(x) for x in approved_scope])
 
     for path in protected_paths:
@@ -212,15 +262,42 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", required=True)
     ap.add_argument("--head", default="HEAD")
+    ap.add_argument("--repo-root")
+    ap.add_argument("--policy-ref")
+    ap.add_argument("--bootstrap-anchor")
     ns = ap.parse_args()
 
-    changes = changed_files(ns.base, ns.head)
-    protected_changes = [(s, p) for s, p in changes if protected(p)]
+    try:
+        configure_repo(ns.repo_root, ns.policy_ref)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print("gate-integrity: FAIL")
+        print(f" - cannot establish repository root: {exc}")
+        return 1
+
+    if ns.bootstrap_anchor and not bootstrap_base_is_receipts_only(ns.bootstrap_anchor, ns.base):
+        print("gate-integrity: FAIL")
+        print(" - bootstrap base is not the pinned anchor plus approval-ledger receipts only")
+        return 1
+
+    try:
+        changes = changed_files(ns.base, ns.head)
+        protected_changes = [(s, p) for s, p in changes if protected(p)]
+    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+        print("gate-integrity: FAIL")
+        print(f" - cannot evaluate protected paths: {exc}")
+        return 1
+
     if not protected_changes:
         print("gate-integrity: PASS (no protected paths changed)")
         return 0
 
-    records = current_gate_records(ns.base, ns.head)
+    try:
+        records = current_gate_records(ns.base, ns.head)
+    except ValueError as exc:
+        print("gate-integrity: FAIL")
+        print(f" - {exc}")
+        return 1
+
     protected_paths = [p for _, p in protected_changes if not p.startswith(GATE_DIR + "/")]
     policy_scan_paths = [p for p in protected_paths if p != "ksp-bootstrap/scripts/ci/check_gate_integrity.py"]
     diff = diff_text(ns.base, ns.head, policy_scan_paths)
