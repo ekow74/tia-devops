@@ -3,8 +3,9 @@
   "decision_log_id": "D-0020",
   "reason": "Close Claude S03 missed-earlier findings ME1 and ME2 before any protected-path merge.",
   "reviewer_kind": "CLAUDE",
-  "review_status": "PENDING",
+  "review_status": "PENDING_EXTERNAL_BASE_LEDGER",
   "review_reference": "KSP_Taxonomy_Knowledge_Prototype_REVIEW_v3.0_2026-10-26",
+  "approval_threshold": "ME1 approval-to-change binding and ME2 validator-path protection",
   "scope": [
     ".github/workflows/ksp-safety-gates.yml",
     "ksp-bootstrap/policies/protected-paths.txt",
@@ -14,20 +15,5 @@
     "ksp-bootstrap/scripts/ci/terraform_real_plan_probe.sh",
     "ksp-bootstrap/tests/test_gate_integrity.py"
   ],
-  "approval": {
-    "approval_id": "PENDING-CLAUDE-GC-0002",
-    "approved_gate_change_id": "GC-0002",
-    "approved_scope": [
-      ".github/workflows/ksp-safety-gates.yml",
-      "ksp-bootstrap/policies/protected-paths.txt",
-      "ksp-bootstrap/scripts/ci/check_gate_integrity.py",
-      "ksp-bootstrap/scripts/ci/verify_gatechange_readback.py",
-      "ksp-bootstrap/scripts/ci/classify_tf_plan.py",
-      "ksp-bootstrap/scripts/ci/terraform_real_plan_probe.sh",
-      "ksp-bootstrap/tests/test_gate_integrity.py"
-    ],
-    "approved_threshold": "ME1 approval-to-change binding and ME2 validator-path protection",
-    "review_revision_id": "PENDING"
-  },
-  "note": "Fail closed. Do not change review_status to APPROVED until the trusted read-back verifies a Claude approval that explicitly names GC-0002 and this approved scope."
+  "note": "The PR cannot authorize itself. Authoritative approval must exist as a trusted base-branch ledger receipt under ksp-bootstrap/governance/approvals/GC-0002.json and be bound to this GateChange, scope, threshold, review reference, and exact PR head SHA."
 }
