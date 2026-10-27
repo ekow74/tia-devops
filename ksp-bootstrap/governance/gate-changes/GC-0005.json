@@ -1,17 +1,19 @@
 {
   "gate_change_id": "GC-0005",
   "decision_log_id": "D-0023",
-  "reason": "Close Claude GC-0004 follow-ups N1, m1 and m2: detect the remaining valid pull_request_target forms conservatively, prevent unreviewed copied zizmor inline suppressions, add an end-to-end protected-rename gate regression, and prove the blocking zizmor configuration fails on an unsuppressed High-severity fixture.",
+  "reason": "Close Claude GC-0004 follow-ups and GC-0005 review v1.0 findings: conservatively detect pull_request_target forms including YAML escape/hash edge cases, require exact path/rule-scoped zizmor suppressions, prove protected renames require a trusted-base receipt bound to a real 40-hex head SHA, and prove blocking zizmor behavior with the exact High finding and exit code.",
   "reviewer_kind": "CLAUDE",
   "review_status": "PENDING_EXTERNAL_BASE_LEDGER",
-  "review_reference": "KSP_GateChange_GC0005_REVIEW_v1.0_2026-10-27",
-  "approval_threshold": "N1 complete trigger/suppression detection, m1 end-to-end rename enforcement, and m2 negative zizmor blocking proof",
+  "review_reference": "KSP_GateChange_GC0005_REVIEW_v2.0_2026-10-27",
+  "approval_threshold": "N1 complete trigger/suppression detection with rule-scoped exceptions, m1 exact trusted-base SHA binding, and m2 exact zizmor High failure proof",
   "scope": [
     ".github/workflows/ci.yml",
+    "governance/workflow-exceptions/pull-request-target.txt",
+    "ksp-bootstrap/scripts/ci/check_gate_integrity.py",
     "ksp-bootstrap/scripts/ci/check_pull_request_target_exceptions.py",
     "ksp-bootstrap/tests/test_gc0004_hardening.py",
     "ksp-bootstrap/tests/test_gc0005_hardening.py",
     "ksp-bootstrap/tests/fixtures/zizmor/unsafe_pull_request_target.yml"
   ],
-  "note": "PR cannot authorize itself. Claude approval must be exact-bound to this GateChange, ordered scope, threshold, review reference and final head SHA, then published only as ksp-bootstrap/governance/approvals/GC-0005.json on trusted main. R3/GitHub plan spend and ksp-platform activation remain out of scope."
+  "note": "PR cannot authorize itself. Claude approval must be exact-bound to this GateChange, ordered scope, threshold, review reference and final head SHA, then published only as ksp-bootstrap/governance/approvals/GC-0005.json on trusted main. The v1.0 review of head 3a4e84436c54337fd67024e3f3f08c62e3eb23f7 requested changes and is not an approval. R3/GitHub plan spend and ksp-platform activation remain out of scope."
 }
