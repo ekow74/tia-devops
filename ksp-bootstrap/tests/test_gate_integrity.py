@@ -7,10 +7,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ROOT.parent
 SCRIPT = ROOT / "scripts/ci/check_gate_integrity.py"
+READBACK_SCRIPT = ROOT / "scripts/ci/verify_gatechange_readback.py"
+
 spec = importlib.util.spec_from_file_location("check_gate_integrity", SCRIPT)
 mod = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
 spec.loader.exec_module(mod)
+
+readback_spec = importlib.util.spec_from_file_location("verify_gatechange_readback", READBACK_SCRIPT)
+readback_mod = importlib.util.module_from_spec(readback_spec)
+assert readback_spec and readback_spec.loader
+readback_spec.loader.exec_module(readback_mod)
 
 HEAD = "a" * 40
 
@@ -41,6 +48,48 @@ def approval(gid: str, approval_id: str, scope: list[str], *, head: str = HEAD, 
 
 
 class GateIntegrityTests(unittest.TestCase):
+    def test_a1_t05d_exact_external_readback_required(self):
+        record = gate("GC-0002", ["ksp-bootstrap/scripts/ci/**"])
+        line = (
+            "GateChange approval: APPROVED | approval_id=APP-2 | gate_change_id=GC-0002 | "
+            f"approved_head_sha={HEAD} | approved_scope=ksp-bootstrap/scripts/ci/** | "
+            "approved_threshold=protected-path merge authorization | review_reference=CLAUDE-TEST"
+        )
+        receipt = readback_mod.build_receipt(
+            record,
+            line,
+            head=HEAD,
+            approval_id="APP-2",
+            review_revision_id="REV-2",
+        )
+        self.assertEqual(receipt["approved_head_sha"], HEAD)
+        self.assertEqual(receipt["approved_gate_change_id"], "GC-0002")
+        self.assertEqual(receipt["approval_consumed_by"], "GC-0002")
+
+    def test_a1_t05d_absent_or_wrong_head_readback_rejected(self):
+        record = gate("GC-0002", ["ksp-bootstrap/scripts/ci/**"])
+        with self.assertRaises(ValueError):
+            readback_mod.build_receipt(
+                record,
+                "no approval line here",
+                head=HEAD,
+                approval_id="APP-2",
+                review_revision_id="REV-2",
+            )
+        wrong = (
+            "GateChange approval: APPROVED | approval_id=APP-2 | gate_change_id=GC-0002 | "
+            f"approved_head_sha={'b' * 40} | approved_scope=ksp-bootstrap/scripts/ci/** | "
+            "approved_threshold=protected-path merge authorization | review_reference=CLAUDE-TEST"
+        )
+        with self.assertRaises(ValueError):
+            readback_mod.build_receipt(
+                record,
+                wrong,
+                head=HEAD,
+                approval_id="APP-2",
+                review_revision_id="REV-2",
+            )
+
     def test_a1_t05e_replayed_unrelated_approval_rejected(self):
         record = gate("GC-0002", ["ksp-bootstrap/scripts/ci/**"])
         wrong = approval("GC-9999", "APP-1", ["ksp-bootstrap/scripts/ci/**"])
