@@ -1,0 +1,3 @@
+# Exact workflow paths approved to use pull_request_target.
+# Entries are reviewed GateChange-controlled exceptions, not patterns.
+.github/workflows/ksp-gate-authority.yml
