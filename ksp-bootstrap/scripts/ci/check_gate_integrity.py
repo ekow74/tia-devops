@@ -220,9 +220,9 @@ def _validate_effective_permissions(
         raise ValueError(
             f"{path}: {source} checks/statuses write is outside reviewed authority paths"
         )
-    if not PULL_REQUEST_TARGET_EVENTS & triggers:
+    if triggers != PULL_REQUEST_TARGET_EVENTS:
         raise ValueError(
-            f"{path}: {source} checks/statuses write lacks pull_request_target"
+            f"{path}: {source} checks/statuses write requires pull_request_target only"
         )
 
 

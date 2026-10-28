@@ -39,9 +39,11 @@ settings/ruleset change is authorized by this draft.
   aliases, merges, and `write-all`. A missing explicit workflow permission
   declaration fails closed because repository defaults are not assumed.
   Checks/statuses writes outside exact reviewed authority/reviewer paths fail;
-  any such write on a `pull_request` workflow fails even within an allowed
-  path. The trusted authority workflow installs the pinned parser before
-  invoking its base checker. The reviewed paths currently request no writes.
+  any such write requires `pull_request_target` to be the workflow's sole
+  trigger, so dispatch and other event runs cannot inherit the grant. Writes on
+  `pull_request` workflows fail even within an allowed path. The trusted
+  authority workflow installs the pinned parser before invoking its base
+  checker. The reviewed paths currently request no writes.
 
 The `artifact_reference` is a link to the immutable workflow run record and its
 job summary, not an approval receipt or downloadable provider artifact.

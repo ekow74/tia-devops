@@ -252,15 +252,28 @@ class Phase0ReviewGateTests(unittest.TestCase):
             "jobs: {review: {runs-on: ubuntu-latest}}",
             "on: pull_request_target\npermissions: {statuses: write}\n"
             "jobs: {review: {permissions: {contents: read, statuses: write}}}",
-            "on: {pull_request_target: {}, workflow_dispatch: {}}\n"
-            "permissions: {checks: write}\n"
-            "jobs: {review: {runs-on: ubuntu-latest}}",
         ):
             self.assertIsNone(
                 authority.validate_workflow_permissions(
                     ".github/workflows/phase0-review-gate.yml", workflow, POLICY
                 )
             )
+
+        for workflow in (
+            "on: {pull_request_target: {}, workflow_dispatch: {}}\n"
+            "permissions: {checks: write}\njobs: {review: {runs-on: ubuntu-latest}}",
+            "on: {pull_request_target: {}, push: {}}\n"
+            "permissions: {statuses: write}\njobs: {review: {runs-on: ubuntu-latest}}",
+            "on: {pull_request_target: {}, workflow_dispatch: {}}\n"
+            "permissions: {contents: read}\n"
+            "jobs: {review: {permissions: {checks: write}, runs-on: ubuntu-latest}}",
+        ):
+            with self.subTest(workflow=workflow), self.assertRaisesRegex(
+                ValueError, "requires pull_request_target only"
+            ):
+                authority.validate_workflow_permissions(
+                    ".github/workflows/phase0-review-gate.yml", workflow, POLICY
+                )
 
         read_only = (
             "on: [push, pull_request]\npermissions: {contents: read}\n"
