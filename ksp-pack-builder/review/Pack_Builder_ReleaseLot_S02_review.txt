@@ -38,7 +38,6 @@ m4 exact hashes:
 EXACT ORDERED REVIEW SCOPE
   The independent review is requested against these complete changed-file paths, in order:
     .github/workflows/pack-builder-release-lot-db.yml
-    ksp-bootstrap/governance/gate-changes/GC-0007.json (removed; collision correction)
     ksp-bootstrap/governance/gate-changes/GC-0008.json
     ksp-bootstrap/policies/protected-paths.txt
     ksp-pack-builder/README.md

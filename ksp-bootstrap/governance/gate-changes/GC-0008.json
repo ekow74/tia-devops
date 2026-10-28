@@ -8,7 +8,6 @@
   "approval_threshold": "M1 complete explicit 25-pair state machine and immutable non-candidate identity; M2 recall-safe pin/freeze plus both lock orderings; m1 TRUNCATE protection; m2 deterministic observed lock waits; m3 freeze-time semantics; m4 exact raw-byte hashes; PostgreSQL 18 canonical DDL qualification and independent final-head review",
   "scope": [
     ".github/workflows/pack-builder-release-lot-db.yml",
-    "ksp-bootstrap/governance/gate-changes/GC-0007.json",
     "ksp-bootstrap/governance/gate-changes/GC-0008.json",
     "ksp-bootstrap/policies/protected-paths.txt",
     "ksp-pack-builder/README.md",
