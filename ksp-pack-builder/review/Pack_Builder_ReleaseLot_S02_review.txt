@@ -1,5 +1,5 @@
 KSP Pack Builder ReleaseLot S02
-Review status: REVISE AND RESUBMIT; implementation evidence only, not independent approval.
+Review status: the independent review of head 1c6c5bd0b41ce8075f518f0280e5377320430251 was REVISE AND RESUBMIT (narrow), with no Critical finding (artifact f361945a-b513-4c66-b91f-a156184ab4c8; https://claude.ai/chat/3b96d365-3ad3-4979-b7f0-1f9419a229a7). This follow-up candidate is implementation evidence only; it has not received final-head independent review or approval.
 
 INTEGRATION PROVENANCE
 Base SHA: 9615dce2054d033c0c84c9d056d78674046ed7f7 (main; refreshed before work and unchanged).
@@ -35,6 +35,28 @@ m3 frozen_at:
 m4 exact hashes:
   Artifact: review/SHA256SUMS.txt lists raw-byte SHA-256 values for every changed file in the exact review scope except the manifest itself; the manifest's own SHA-256 is reported separately in the completion report.
 
+FOLLOW-UP FINDING RESPONSE TABLE
+  N1 RecallEvent mutability:
+    Change: reject DELETE and changes to recall_id, claim_id, claim_revision_id, content_hash, reason, and initiated_at. Allow unchanged updates and one NULL -> value completed_at update only. completed_at does not cancel the recall. A recall_event TRUNCATE guard uses exact message "TRUNCATE is prohibited on RecallEvent records".
+    Tests: additional_regression.sql asserts exact P0001/message for each immutable field, DELETE, clearing/changing completed_at; verifies one-time set/idempotent unchanged update; proves completed exact recall still prevents membership pinning; rejects TRUNCATE with exact message. Workflow asserts both trigger objects.
+  N2 RecallEvent without a target:
+    Change: after locking matching revisions in stable order, reject the event when no revision matched with exact message "RecallEvent matches no claim revision". This includes claim-wide events on claims that do not yet have any revision; operators must issue such a recall after a matching revision exists.
+    Tests: malformed NULL-hash claim/revision mismatch, unmatched hash-only, and claim-wide zero-revision inserts reject with exact P0001/message. Matching exact, claim-wide, and hash-only recalls are exercised; the exact event still prevents pinning after completion.
+  m5 human-dual review lock order:
+    Change: BEFORE UPDATE OR DELETE statement gate on human_dual_review takes the shared advisory lock before the row guard locks claim_revision. This closes the review-row -> revision -> advisory inversion with freeze.
+    Test: RL-CONC-F holds a human-dual review edit/reapproval transaction, verifies a freeze contender waits on that gate, and verifies both commit without deadlock and the resulting freeze is eligible. This does not claim that arbitrary explicit application row locks are globally ordered.
+  m6 global serialization and timeout operation:
+    Change: document that unrelated lot work can wait behind a RecallEvent blocked on a revision reader; document transaction-local lock_timeout/statement_timeout guidance and retry/triage behavior. D-0019 staging qualification at READ COMMITTED remains pending and was not run.
+    Tests: REPEATABLE READ and SERIALIZABLE mutation attempts for claim_revision, recall_event, release_lot_claim, and release_lot each reject with exact P0001/message; RL-CONC-H observes unrelated lot work queued behind a recall waiting on an ungated revision reader.
+    Scope note: freeze/withdrawal and freeze/recall orderings are covered by RL-CONC-A-D; pin-versus-concurrent recall, pin-versus-withdrawal, release-versus-recall, and multi-revision recall races are deferred and are not claimed as qualified.
+  m7 snapshot_isolation metadata:
+    Result: schema constrains this field to REPEATABLE READ, but no reader consumes it in this package. The relationship to registry_snapshot_at and any bundle-assembly runtime contract remain unresolved; the field is not represented as the freeze transaction's isolation level.
+  m8 freeze revision-row interlock:
+    Test: RL-CONC-G uses an ungated FOR NO KEY UPDATE holder on the exact pinned revision; pg_blocking_pids and transactionid locks prove freeze waits for that holder and succeeds after commit. A mutation check removes the freeze FOR SHARE clause from temporary canonical DDL and confirms this regression fails because the wait is not observed.
+  m9 canonical loader output:
+    Change: reconstruct canonical DDL in a temporary file, pin and print its exact SHA-256, load it, and remove it on exit. The workflow independently reconstructs to a temporary path; no generated phase0_schema.sql is written into the checkout.
+    Test: after the canonical load, phase0_schema.sql is absent from the repository package directory.
+
 EXACT ORDERED REVIEW SCOPE
   The independent review is requested against these complete changed-file paths, in order:
     .github/workflows/pack-builder-release-lot-db.yml
@@ -57,7 +79,7 @@ EXACT ORDERED REVIEW SCOPE
     ksp-pack-builder/tests/run_release_lot_isolation.sh
 
 CANONICAL QUALIFICATION
-Canonical DDL is reconstructed by tests/run_postgres_ddl.sh from sql/phase0_schema.parts/*.part and sql/release_lot_controls.sql; the loader and workflow pin the exact concatenated raw-byte SHA-256. It is loaded in PostgreSQL 18, not the minimal fixture.
+Canonical DDL is reconstructed to a temporary file by tests/run_postgres_ddl.sh from sql/phase0_schema.parts/*.part and sql/release_lot_controls.sql; the loader and workflow pin the exact concatenated raw-byte SHA-256. It is loaded in PostgreSQL 18, not the minimal fixture. No generated canonical SQL is left in the worktree.
 Server: PostgreSQL 18.6.
 Commands:
   bash ksp-pack-builder/tests/run_postgres_ddl.sh
@@ -65,11 +87,22 @@ Commands:
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -f ksp-pack-builder/tests/release_lot_additional_regression.sql
   bash ksp-pack-builder/tests/run_release_lot_isolation.sh
   bash ksp-pack-builder/tests/run_release_lot_concurrency.sh
-Local disposable PostgreSQL 18 qualification at implementation head 765c452ea37c602573d38724b20e91f08f2b10f0: PASS for all commands above. Canonical schema SHA-256: b9c596a900df6ff3b29e1675cfc2fca321a8d1a4867063a89888a12ee3893fac. These results predate the metadata-only GC-0008 correction.
-Hosted CI for implementation head 765c452ea37c602573d38724b20e91f08f2b10f0 is not a pass: DevOps CI run https://github.com/ekow74/tia-devops/actions/runs/40649087934, Safety Gates run https://github.com/ekow74/tia-devops/actions/runs/40649087935, PostgreSQL qualification run https://github.com/ekow74/tia-devops/actions/runs/40649088213, and Gate Authority run https://github.com/ekow74/tia-devops/actions/runs/40649088422 all concluded action_required with zero jobs. The owner workflow-approval requirement is not bypassed.
-For metadata-only correction head dbd691aa21d693bf496f74f43b6b941d600d23bf, DevOps CI run https://github.com/ekow74/tia-devops/actions/runs/40650187313, Safety Gates run https://github.com/ekow74/tia-devops/actions/runs/40650187326, PostgreSQL qualification run https://github.com/ekow74/tia-devops/actions/runs/40650187344, and Gate Authority run https://github.com/ekow74/tia-devops/actions/runs/40650184928 all concluded action_required with zero jobs. These are blocked before job execution; they are not passes. The exact final review-packet head and its hosted status are reported in the completion comment.
+Independent Claude review of head 1c6c5bd0b41ce8075f518f0280e5377320430251 reports that it reran the previous shipped suites on PostgreSQL 16.15 only; PostgreSQL 18 was unavailable in that review session. The review verified the exact prior-head packets, all 18 blobs, prior canonical hash, and manifest; its narrow REVISE AND RESUBMIT findings are recorded above and it issued no approval.
+Implementer local disposable PostgreSQL 18.6 qualification for this follow-up source and final canonical hash pin: PASS. Server: PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2). Canonical schema SHA-256: e3198f1c6ddc81ba41165857708616ecc379e26a4eaeae56332e5a4d2898950c.
+Commands (executed from the repository root with DATABASE_URL pointing only to a disposable local qualification database):
+  bash ksp-pack-builder/tests/run_postgres_ddl.sh
+  test ! -e ksp-pack-builder/sql/phase0_schema.sql
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -f ksp-pack-builder/tests/release_lot_regression.sql
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -f ksp-pack-builder/tests/release_lot_additional_regression.sql
+  bash ksp-pack-builder/tests/run_release_lot_isolation.sh
+  bash ksp-pack-builder/tests/run_release_lot_concurrency.sh
+  PostgreSQL 18 workflow trigger-object comparison (14 expected control triggers): PASS
+  m8 negative mutation experiment: on a disposable mutant database, removed only the freeze `FOR SHARE OF cr` clause from temporary canonical DDL and ran run_release_lot_concurrency.sh; it failed as expected at RL-CONC-G with "rl-g-freeze exited before a verified revision-row wait". No mutated DDL or test output was added to the repository.
+The loader and workflow remove reconstructed DDL from temporary files. No generated phase0_schema.sql remained in the package directory.
+Hosted workflow owner approval remains required and was not bypassed. The previous exact-head runs were action_required with zero jobs; run URLs and the final follow-up head's status are reported in the PR completion comment after push.
 
 GOVERNANCE AND REMAINING RISKS
 GC-0008 is the pending GateChange proposal for the exact ordered scope above. Open PR refs and refreshed main were checked: GC-0008 was unallocated; PR #12 separately reserves GC-0007. D-0023 is cited only for the governance boundary that approval artifacts are evidence, not merge authorization; it is not approval of these changes. No implementation-specific owner decision or approval is recorded; that provenance remains pending owner and independent review. No decision or approval receipt is minted or modified. The trusted-base checker is expected to block until an external base-branch approval binds the GateChange and final head; that block is not bypassed.
-The PR remains draft pending independent Claude review of the exact final head. Ekow retains merge authority. No PR #3 integration, deployment, Terraform apply, real-lot freeze, or merge occurred.
-The advisory gate intentionally serializes all release-lot membership/state mutations, matching claim-revision status/recall updates, and RecallEvent inserts. This is conservative and may reduce throughput; any future narrowing requires an independently reviewed lock-order proof and concurrency qualification.
+The prior exact-head independent Claude verdict was REVISE AND RESUBMIT, not approval. Independent review of the follow-up exact head and trusted-base GateChange approval remain pending. Ekow retains merge authority. No PR #3 integration, deployment, Terraform apply, real-lot freeze, staging qualification, or merge occurred.
+The advisory gate intentionally serializes all release-lot membership/state mutations, matching claim-revision status/recall updates, RecallEvent inserts, and human_dual_review updates/deletes. This is conservative and may reduce throughput; an unrelated lot write can wait behind a recall blocked by an ungated revision reader. Operator timeout guidance is in README.md; values are not production-qualified. Any future narrowing requires an independently reviewed lock-order proof and concurrency qualification. Explicit user row locks outside the gated trigger paths are not claimed to be globally ordered.
+The D-0019 PostgreSQL 18 control/staging qualification at READ COMMITTED remains pending; no staging/production resources were used. Before any real freeze, use a non-owner/non-superuser application role unable to disable triggers or set session_replication_role; this package did not qualify grants/roles. bundle_sha256 remains caller-supplied and is not cryptographically bound to membership. The meaning of snapshot_isolation remains unresolved as stated above.

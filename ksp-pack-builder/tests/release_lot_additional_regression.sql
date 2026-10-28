@@ -9,6 +9,9 @@ INSERT INTO claim(claim_id,domain,concept_id) VALUES
   ('pharm:claim:rl_recall_pin','PHARM','pharm:concept:rl_s02'),
   ('pharm:claim:rl_recall_freeze','PHARM','pharm:concept:rl_s02'),
   ('pharm:claim:rl_recall_freeze2','PHARM','pharm:concept:rl_s02'),
+  ('pharm:claim:rl_recall_hash','PHARM','pharm:concept:rl_s02'),
+  ('pharm:claim:rl_recall_mismatch','PHARM','pharm:concept:rl_s02'),
+  ('pharm:claim:rl_recall_unmatched','PHARM','pharm:concept:rl_s02'),
   ('pharm:claim:rl_stale','PHARM','pharm:concept:rl_s02'),
   ('pharm:claim:rl_quarantine','PHARM','pharm:concept:rl_s02');
 INSERT INTO claim_revision(
@@ -19,6 +22,7 @@ INSERT INTO claim_revision(
   ('pharm:claimrev:rl_recall_pin','pharm:claim:rl_recall_pin',1,'MECHANISM','recall pin text','{"scope":"UNIVERSAL_DEFINITION"}','MACHINE_ENTAILED','ROUTINE','TEST',repeat('2',64),'APPROVED'),
   ('pharm:claimrev:rl_recall_freeze','pharm:claim:rl_recall_freeze',1,'MECHANISM','recall freeze text','{"scope":"UNIVERSAL_DEFINITION"}','MACHINE_ENTAILED','ROUTINE','TEST',repeat('3',64),'APPROVED'),
   ('pharm:claimrev:rl_recall_freeze2','pharm:claim:rl_recall_freeze2',1,'MECHANISM','recall freeze text two','{"scope":"UNIVERSAL_DEFINITION"}','MACHINE_ENTAILED','ROUTINE','TEST',repeat('6',64),'APPROVED'),
+  ('pharm:claimrev:rl_recall_hash','pharm:claim:rl_recall_hash',1,'MECHANISM','hash-only recall text','{"scope":"UNIVERSAL_DEFINITION"}','MACHINE_ENTAILED','ROUTINE','TEST',repeat('7',64),'APPROVED'),
   ('pharm:claimrev:rl_stale','pharm:claim:rl_stale',1,'MECHANISM','stale text','{"scope":"UNIVERSAL_DEFINITION"}','MACHINE_ENTAILED','ROUTINE','TEST',repeat('4',64),'APPROVED'),
   ('pharm:claimrev:rl_quarantine','pharm:claim:rl_quarantine',1,'MECHANISM','quarantine text','{"scope":"UNIVERSAL_DEFINITION"}','MACHINE_ENTAILED','ROUTINE','TEST',repeat('5',64),'APPROVED');
 
@@ -171,6 +175,64 @@ END $$;
 -- RL-REC-1: an exact RecallEvent blocks pinning while the revision stays APPROVED.
 INSERT INTO recall_event(claim_id,claim_revision_id,content_hash,reason)
 VALUES ('pharm:claim:rl_recall_pin','pharm:claimrev:rl_recall_pin',repeat('2',64),'RL-REC-1 exact');
+-- Completion is one-time audit metadata; it never cancels the authoritative recall.
+DO $$
+DECLARE
+  event_id BIGINT;
+  completed_value TIMESTAMPTZ;
+  identity_update TEXT;
+  identity_updates TEXT[] := ARRAY[
+    'recall_id=recall_id + 100000',
+    'claim_id=''pharm:claim:rl_recall_hash''',
+    'claim_revision_id=''pharm:claimrev:rl_recall_freeze2''',
+    'content_hash=repeat(''f'',64)',
+    'reason=reason || '' changed''',
+    'initiated_at=initiated_at + interval ''1 second'''
+  ];
+BEGIN
+  SELECT recall_id INTO event_id
+  FROM recall_event
+  WHERE claim_id='pharm:claim:rl_recall_pin';
+
+  UPDATE recall_event SET completed_at=clock_timestamp()
+  WHERE recall_id=event_id;
+  SELECT completed_at INTO completed_value
+  FROM recall_event WHERE recall_id=event_id;
+  IF completed_value IS NULL THEN
+    RAISE EXCEPTION 'RecallEvent completion timestamp was not set';
+  END IF;
+  UPDATE recall_event SET completed_at=completed_at
+  WHERE recall_id=event_id;
+
+  FOREACH identity_update IN ARRAY identity_updates LOOP
+    BEGIN
+      EXECUTE format('UPDATE recall_event SET %s WHERE recall_id=%s',identity_update,event_id);
+      RAISE EXCEPTION 'TEST_FAIL: RecallEvent identity changed: %',identity_update;
+    EXCEPTION WHEN SQLSTATE 'P0001' THEN
+      IF SQLERRM<>'RecallEvent is append-only; only completed_at may be set once' THEN RAISE; END IF;
+    END;
+  END LOOP;
+
+  BEGIN
+    UPDATE recall_event SET completed_at=NULL WHERE recall_id=event_id;
+    RAISE EXCEPTION 'TEST_FAIL: completed_at was cleared';
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    IF SQLERRM<>'RecallEvent is append-only; only completed_at may be set once' THEN RAISE; END IF;
+  END;
+  BEGIN
+    UPDATE recall_event SET completed_at=completed_value + interval '1 second'
+    WHERE recall_id=event_id;
+    RAISE EXCEPTION 'TEST_FAIL: completed_at was changed';
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    IF SQLERRM<>'RecallEvent is append-only; only completed_at may be set once' THEN RAISE; END IF;
+  END;
+  BEGIN
+    DELETE FROM recall_event WHERE recall_id=event_id;
+    RAISE EXCEPTION 'TEST_FAIL: RecallEvent was deleted';
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    IF SQLERRM<>'RecallEvent is append-only; only completed_at may be set once' THEN RAISE; END IF;
+  END;
+END $$;
 INSERT INTO release_lot(lot_id,bundle_sha256,frozen_at,registry_snapshot_at,status)
 VALUES ('lot:recall-pin-exact',repeat('d',64),NULL,clock_timestamp(),'CANDIDATE');
 DO $$ BEGIN
@@ -199,6 +261,47 @@ DO $$ BEGIN
     RAISE EXCEPTION 'TEST_FAIL: claim-wide recall permitted pinning';
   EXCEPTION WHEN SQLSTATE 'P0001' THEN
     IF SQLERRM<>'release-lot membership requires exact APPROVED non-recalled claim revision' THEN RAISE; END IF;
+  END;
+END $$;
+
+-- A hash-only recall is valid if it matches an existing revision.
+INSERT INTO recall_event(claim_id,claim_revision_id,content_hash,reason)
+VALUES ('pharm:claim:rl_recall_hash',NULL,repeat('7',64),'RL-REC-1 hash-only');
+INSERT INTO release_lot(lot_id,bundle_sha256,frozen_at,registry_snapshot_at,status)
+VALUES ('lot:recall-pin-hash',repeat('e',64),NULL,clock_timestamp(),'CANDIDATE');
+DO $$ BEGIN
+  BEGIN
+    INSERT INTO release_lot_claim(lot_id,claim_revision_id,content_hash)
+    VALUES ('lot:recall-pin-hash','pharm:claimrev:rl_recall_hash',repeat('7',64));
+    RAISE EXCEPTION 'TEST_FAIL: matching hash-only recall permitted pinning';
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    IF SQLERRM<>'release-lot membership requires exact APPROVED non-recalled claim revision' THEN RAISE; END IF;
+  END;
+END $$;
+
+-- MATCH SIMPLE skips a composite FK when content_hash is NULL; matching must
+-- reject a revision belonging to another claim, and reject events with no target.
+DO $$ BEGIN
+  BEGIN
+    INSERT INTO recall_event(claim_id,claim_revision_id,content_hash,reason)
+    VALUES ('pharm:claim:rl_recall_mismatch','pharm:claimrev:rl_recall_freeze2',NULL,'N2 mismatched claim/revision');
+    RAISE EXCEPTION 'TEST_FAIL: mismatched RecallEvent target was accepted';
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    IF SQLERRM<>'RecallEvent matches no claim revision' THEN RAISE; END IF;
+  END;
+  BEGIN
+    INSERT INTO recall_event(claim_id,claim_revision_id,content_hash,reason)
+    VALUES ('pharm:claim:rl_recall_unmatched',NULL,repeat('f',64),'N2 unmatched hash-only');
+    RAISE EXCEPTION 'TEST_FAIL: unmatched hash-only RecallEvent was accepted';
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    IF SQLERRM<>'RecallEvent matches no claim revision' THEN RAISE; END IF;
+  END;
+  BEGIN
+    INSERT INTO recall_event(claim_id,claim_revision_id,content_hash,reason)
+    VALUES ('pharm:claim:rl_recall_unmatched',NULL,NULL,'N2 claim-wide with no revisions');
+    RAISE EXCEPTION 'TEST_FAIL: unmatched claim-wide RecallEvent was accepted';
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    IF SQLERRM<>'RecallEvent matches no claim revision' THEN RAISE; END IF;
   END;
 END $$;
 
@@ -235,6 +338,12 @@ DO $$ BEGIN
     RAISE EXCEPTION 'TEST_FAIL: release_lot truncated';
   EXCEPTION WHEN SQLSTATE 'P0001' THEN
     IF SQLERRM<>'TRUNCATE is prohibited on durable release-lot tables' THEN RAISE; END IF;
+  END;
+  BEGIN
+    TRUNCATE recall_event;
+    RAISE EXCEPTION 'TEST_FAIL: recall_event truncated';
+  EXCEPTION WHEN SQLSTATE 'P0001' THEN
+    IF SQLERRM<>'TRUNCATE is prohibited on RecallEvent records' THEN RAISE; END IF;
   END;
 END $$;
 

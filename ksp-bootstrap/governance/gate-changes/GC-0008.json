@@ -5,7 +5,7 @@
   "reviewer_kind": "CLAUDE",
   "review_status": "PENDING_EXTERNAL_BASE_LEDGER",
   "review_reference": "KSP_Pack_Builder_ReleaseLot_Claude_Review_v1.1_and_Handoff_v1.0",
-  "approval_threshold": "M1 complete explicit 25-pair state machine and immutable non-candidate identity; M2 recall-safe pin/freeze plus both lock orderings; m1 TRUNCATE protection; m2 deterministic observed lock waits; m3 freeze-time semantics; m4 exact raw-byte hashes; PostgreSQL 18 canonical DDL qualification and independent final-head review",
+  "approval_threshold": "M1 explicit 25-pair state machine and immutable identity; M2 recall-safe pin/freeze; N1 append-only RecallEvent and N2 zero-match rejection; m1-m4 controls; m5 review lock order; m6 isolation, timeout and operational evidence; m7 metadata semantics recorded unresolved; m8 freeze row-lock regression with mutation check; m9 temporary canonical DDL; PostgreSQL 18 canonical DDL qualification and independent final-head review",
   "scope": [
     ".github/workflows/pack-builder-release-lot-db.yml",
     "ksp-bootstrap/governance/gate-changes/GC-0008.json",

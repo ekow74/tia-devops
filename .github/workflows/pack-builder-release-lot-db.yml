@@ -68,14 +68,19 @@ jobs:
           set -euo pipefail
           chmod +x ksp-pack-builder/tests/run_postgres_ddl.sh
           ksp-pack-builder/tests/run_postgres_ddl.sh
+          test ! -e ksp-pack-builder/sql/phase0_schema.sql
 
       - name: Verify the canonical shipped schema SHA-256
         shell: bash
         run: |
           set -euo pipefail
-          test -f ksp-pack-builder/sql/phase0_schema.sql
-          sha256sum ksp-pack-builder/sql/phase0_schema.sql
-          test "$(sha256sum ksp-pack-builder/sql/phase0_schema.sql | awk '{print $1}')" = "b9c596a900df6ff3b29e1675cfc2fca321a8d1a4867063a89888a12ee3893fac"
+          canonical=$(mktemp)
+          trap 'rm -f "$canonical"' EXIT
+          cat ksp-pack-builder/sql/phase0_schema.parts/*.part \
+            ksp-pack-builder/sql/release_lot_controls.sql > "$canonical"
+          actual=$(sha256sum "$canonical" | awk '{print $1}')
+          echo "canonical_schema_sha256=$actual"
+          test "$actual" = "e3198f1c6ddc81ba41165857708616ecc379e26a4eaeae56332e5a4d2898950c"
 
       - name: Run RL1/RL2/RL4/RL5 and positive-path regressions on real DDL
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -f ksp-pack-builder/tests/release_lot_regression.sql
@@ -113,17 +118,23 @@ jobs:
               'trg_release_lot_claim_integrity_gate',
               'trg_claim_revision_release_lot_integrity_gate',
               'trg_recall_event_release_lot_integrity_gate',
+              'trg_recall_event_append_only',
+              'trg_recall_event_truncate_guard',
               'trg_release_lot_claim_truncate_guard',
               'trg_release_lot_truncate_guard',
               'trg_claim_revision_release_lot_quarantine',
-              'trg_recall_event_release_lot_quarantine'
+              'trg_recall_event_release_lot_quarantine',
+              'trg_human_dual_review_release_lot_integrity_gate'
             );
           SQL
           diff -u <(printf '%s\n' \
             trg_claim_revision_release_lot_quarantine \
             trg_claim_revision_release_lot_integrity_gate \
+            trg_human_dual_review_release_lot_integrity_gate \
+            trg_recall_event_append_only \
             trg_recall_event_release_lot_integrity_gate \
             trg_recall_event_release_lot_quarantine \
+            trg_recall_event_truncate_guard \
             trg_release_lot_claim_truncate_guard \
             trg_release_lot_truncate_guard \
             trg_release_lot_claim_integrity_gate \

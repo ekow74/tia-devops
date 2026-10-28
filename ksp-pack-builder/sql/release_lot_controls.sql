@@ -3,8 +3,8 @@
 
 BEGIN;
 
--- A transaction-scoped gate gives all release-lot, pinning, withdrawal, and
--- RecallEvent paths the same lock order before they acquire tuple locks. The
+-- A transaction-scoped gate gives release-lot, pinning, withdrawal, RecallEvent,
+-- and human-dual review mutation paths the same order before tuple locks. The
 -- revision row locks below remain the per-revision eligibility interlock.
 CREATE FUNCTION lock_release_lot_integrity_gate() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -27,6 +27,9 @@ FOR EACH STATEMENT EXECUTE FUNCTION lock_release_lot_integrity_gate();
 CREATE TRIGGER trg_recall_event_release_lot_integrity_gate
 BEFORE INSERT ON recall_event
 FOR EACH STATEMENT EXECUTE FUNCTION lock_release_lot_integrity_gate();
+CREATE TRIGGER trg_human_dual_review_release_lot_integrity_gate
+BEFORE UPDATE OR DELETE ON human_dual_review
+FOR EACH STATEMENT EXECUTE FUNCTION lock_release_lot_integrity_gate();
 
 CREATE FUNCTION reject_release_lot_truncate() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -39,6 +42,38 @@ FOR EACH STATEMENT EXECUTE FUNCTION reject_release_lot_truncate();
 CREATE TRIGGER trg_release_lot_claim_truncate_guard
 BEFORE TRUNCATE ON release_lot_claim
 FOR EACH STATEMENT EXECUTE FUNCTION reject_release_lot_truncate();
+
+CREATE FUNCTION protect_recall_event_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP='DELETE' THEN
+    RAISE EXCEPTION 'RecallEvent is append-only; only completed_at may be set once';
+  END IF;
+
+  IF NEW.recall_id IS DISTINCT FROM OLD.recall_id OR
+     NEW.claim_id IS DISTINCT FROM OLD.claim_id OR
+     NEW.claim_revision_id IS DISTINCT FROM OLD.claim_revision_id OR
+     NEW.content_hash IS DISTINCT FROM OLD.content_hash OR
+     NEW.reason IS DISTINCT FROM OLD.reason OR
+     NEW.initiated_at IS DISTINCT FROM OLD.initiated_at OR
+     (OLD.completed_at IS NOT NULL AND NEW.completed_at IS DISTINCT FROM OLD.completed_at) THEN
+    RAISE EXCEPTION 'RecallEvent is append-only; only completed_at may be set once';
+  END IF;
+
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER trg_recall_event_append_only
+BEFORE UPDATE OR DELETE ON recall_event
+FOR EACH ROW EXECUTE FUNCTION protect_recall_event_append_only();
+
+CREATE FUNCTION reject_recall_event_truncate() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'TRUNCATE is prohibited on RecallEvent records';
+END $$;
+
+CREATE TRIGGER trg_recall_event_truncate_guard
+BEFORE TRUNCATE ON recall_event
+FOR EACH STATEMENT EXECUTE FUNCTION reject_recall_event_truncate();
 
 -- Membership is mutable only while the lot is CANDIDATE. New or updated membership
 -- must point at an exact currently APPROVED, non-recalled revision.
@@ -271,6 +306,10 @@ BEGIN
     AND (NEW.content_hash IS NULL OR cr.content_hash=NEW.content_hash)
   ORDER BY cr.claim_revision_id
   FOR NO KEY UPDATE OF cr;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'RecallEvent matches no claim revision';
+  END IF;
 
   UPDATE release_lot rl
      SET status='QUARANTINED'
