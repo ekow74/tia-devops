@@ -30,3 +30,5 @@ Qualification cases:
 PostgreSQL 18 CI reconstructs and loads the canonical shipped schema from `sql/phase0_schema.parts/` and `sql/release_lot_controls.sql`; it does not qualify against the minimal fixture schema. The advisory transaction gate serializes pinning, release-lot mutations, approval withdrawal, and RecallEvent insertion before tuple locks. Per-revision `FOR SHARE`/`FOR NO KEY UPDATE` locks remain in stable revision-id order. These operations require READ COMMITTED; stronger isolation aborts before mutation to avoid stale-snapshot approval.
 
 The GateChange is a pending review proposal, not an approval receipt. The PR remains draft pending independent Claude review of the final head and trusted-base GateChange approval.
+
+This proposal is GC-0008; GC-0007 is reserved separately by PR #12. D-0023 is cited only for the governance boundary; it is not approval of the ReleaseLot implementation. Implementation-specific owner and independent-review provenance remains pending.

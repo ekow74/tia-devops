@@ -33,7 +33,29 @@ m3 frozen_at:
   Test: positive freeze timestamp bounds, attempted candidate timestamp assignment, non-candidate insertion, and frozen/released timestamp identity mutation.
 
 m4 exact hashes:
-  Artifact: review/SHA256SUMS.txt lists raw-byte SHA-256 values for every submitted changed source, test, workflow, governance, and review-matrix file; the manifest's own SHA-256 is reported separately in the PR evidence.
+  Artifact: review/SHA256SUMS.txt lists raw-byte SHA-256 values for every changed file in the exact review scope except the manifest itself; the manifest's own SHA-256 is reported separately in the completion report.
+
+EXACT ORDERED REVIEW SCOPE
+  The independent review is requested against these complete changed-file paths, in order:
+    .github/workflows/pack-builder-release-lot-db.yml
+    ksp-bootstrap/governance/gate-changes/GC-0007.json (removed; collision correction)
+    ksp-bootstrap/governance/gate-changes/GC-0008.json
+    ksp-bootstrap/policies/protected-paths.txt
+    ksp-pack-builder/README.md
+    ksp-pack-builder/review/Pack_Builder_ReleaseLot_S02_review.txt
+    ksp-pack-builder/review/SHA256SUMS.txt
+    ksp-pack-builder/sql/phase0_schema.parts/001.part
+    ksp-pack-builder/sql/phase0_schema.parts/002.part
+    ksp-pack-builder/sql/phase0_schema.parts/003.part
+    ksp-pack-builder/sql/phase0_schema.parts/004.part
+    ksp-pack-builder/sql/phase0_schema.parts/005.part
+    ksp-pack-builder/sql/release_lot_controls.sql
+    ksp-pack-builder/tests/release_lot_additional_regression.sql
+    ksp-pack-builder/tests/release_lot_fixture_schema.sql
+    ksp-pack-builder/tests/release_lot_regression.sql
+    ksp-pack-builder/tests/run_postgres_ddl.sh
+    ksp-pack-builder/tests/run_release_lot_concurrency.sh
+    ksp-pack-builder/tests/run_release_lot_isolation.sh
 
 CANONICAL QUALIFICATION
 Canonical DDL is reconstructed by tests/run_postgres_ddl.sh from sql/phase0_schema.parts/*.part and sql/release_lot_controls.sql; the loader and workflow pin the exact concatenated raw-byte SHA-256. It is loaded in PostgreSQL 18, not the minimal fixture.
@@ -44,10 +66,10 @@ Commands:
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -f ksp-pack-builder/tests/release_lot_additional_regression.sql
   bash ksp-pack-builder/tests/run_release_lot_isolation.sh
   bash ksp-pack-builder/tests/run_release_lot_concurrency.sh
-Local disposable PostgreSQL 18 qualification: PASS for all commands above. Canonical schema SHA-256: b9c596a900df6ff3b29e1675cfc2fca321a8d1a4867063a89888a12ee3893fac.
-CI run URL and exact final head SHA are recorded in the PR check and completion report after this evidence commit is pushed.
+Local disposable PostgreSQL 18 qualification at implementation head 765c452ea37c602573d38724b20e91f08f2b10f0: PASS for all commands above. Canonical schema SHA-256: b9c596a900df6ff3b29e1675cfc2fca321a8d1a4867063a89888a12ee3893fac. These results predate the metadata-only GC-0008 correction.
+Hosted CI for implementation head 765c452ea37c602573d38724b20e91f08f2b10f0 is not a pass: DevOps CI run https://github.com/ekow74/tia-devops/actions/runs/40649087934, Safety Gates run https://github.com/ekow74/tia-devops/actions/runs/40649087935, PostgreSQL qualification run https://github.com/ekow74/tia-devops/actions/runs/40649088213, and Gate Authority run https://github.com/ekow74/tia-devops/actions/runs/40649088422 all concluded action_required with zero jobs. The owner workflow-approval requirement is not bypassed. The final metadata-correction head has no hosted qualification result yet.
 
 GOVERNANCE AND REMAINING RISKS
-GC-0007 is a pending GateChange proposal for this package, workflow, and trusted protected-path registry coverage. No decision or approval receipt is minted or modified. The trusted-base checker is expected to block until an external base-branch approval binds the GateChange and final head; that block is not bypassed.
+GC-0008 is the pending GateChange proposal for the exact ordered scope above. Open PR refs and refreshed main were checked: GC-0008 was unallocated; PR #12 separately reserves GC-0007. D-0023 is cited only for the governance boundary that approval artifacts are evidence, not merge authorization; it is not approval of these changes. No implementation-specific owner decision or approval is recorded; that provenance remains pending owner and independent review. No decision or approval receipt is minted or modified. The trusted-base checker is expected to block until an external base-branch approval binds the GateChange and final head; that block is not bypassed.
 The PR remains draft pending independent Claude review of the exact final head. Ekow retains merge authority. No PR #3 integration, deployment, Terraform apply, real-lot freeze, or merge occurred.
 The advisory gate intentionally serializes all release-lot membership/state mutations, matching claim-revision status/recall updates, and RecallEvent inserts. This is conservative and may reduce throughput; any future narrowing requires an independently reviewed lock-order proof and concurrency qualification.
