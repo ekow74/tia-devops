@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import importlib.util
+import contextlib
+import io
 import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+import urllib.error
+import urllib.parse
+import urllib.request
 
 import yaml
 
@@ -14,6 +20,7 @@ REPO_ROOT = ROOT.parent
 MODULE_PATH = ROOT / "scripts/ci/phase0_review_gate.py"
 AUTHORITY = ROOT / "scripts/ci/check_gate_integrity.py"
 AUTHORITY_WORKFLOW = REPO_ROOT / ".github/workflows/ksp-gate-authority.yml"
+CI_WORKFLOW = REPO_ROOT / ".github/workflows/ci.yml"
 WORKFLOW = REPO_ROOT / ".github/workflows/phase0-review-gate.yml"
 ALLOWLIST = REPO_ROOT / "governance/workflow-exceptions/pull-request-target.txt"
 AUTHORITY_POLICY = ROOT / "policies/gate-authority.json"
@@ -33,6 +40,7 @@ authority = load_module("phase0_gate_authority", AUTHORITY)
 POLICY = json.loads(AUTHORITY_POLICY.read_text())
 SHA = "a" * 40
 BASE = "b" * 40
+POLICY_SHA = "d" * 40
 
 
 def envelope(verdict: str, identity: str, reviewed: bool) -> dict:
@@ -41,6 +49,7 @@ def envelope(verdict: str, identity: str, reviewed: bool) -> dict:
         pr_number=11,
         head_sha=SHA,
         base_sha=BASE,
+        policy_sha=POLICY_SHA,
         reviewer_identity=identity,
         verdict=verdict,
         artifact_reference="run:https://github.com/ekow74/tia-devops/actions/runs/123",
@@ -54,6 +63,117 @@ def git(root: Path, *args: str) -> str:
     return subprocess.check_output(
         ["git", *args], cwd=root, text=True, stderr=subprocess.STDOUT
     ).strip()
+
+
+def exercise_run_gate(
+    files: list[dict],
+    *,
+    changed_counts: tuple[int, int] | None = None,
+    post_head_sha: str = SHA,
+    post_base_sha: str = BASE,
+    base_ref: str = "main",
+    event_head_sha: str = SHA,
+    workflow_sha_override: str | None = None,
+    trusted_env_sha: str | None = None,
+    advance_checkout: bool = False,
+) -> tuple[dict | None, Exception | None, str, str, str]:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        git(root, "init", "-q")
+        git(root, "config", "user.email", "test@example.invalid")
+        git(root, "config", "user.name", "Phase0 test")
+        workflow = root / ".github/workflows/phase0-review-gate.yml"
+        workflow.parent.mkdir(parents=True)
+        workflow.write_text(
+            "on: pull_request_target\npermissions: {contents: read}\n"
+            "jobs: {review: {runs-on: ubuntu-latest}}\n"
+        )
+        policy = root / "ksp-bootstrap/policies/protected-paths.txt"
+        policy.parent.mkdir(parents=True)
+        policy.write_text("protected/\n")
+        git(root, "add", ".")
+        git(root, "commit", "-q", "-m", "trusted workflow source")
+        trusted_sha = git(root, "rev-parse", "HEAD")
+        expected_workflow_version = (
+            "phase0-review/v0+"
+            + git(root, "rev-parse", f"{trusted_sha}:{review.WORKFLOW_PATH}")
+        )
+        if advance_checkout:
+            git(root, "commit", "--allow-empty", "-q", "-m", "checkout mismatch")
+
+        base_ref_sha = BASE
+        pr_snapshots = [
+            {
+                "head": {"sha": SHA},
+                "base": {"sha": base_ref_sha},
+                "changed_files": (
+                    changed_counts[0] if changed_counts is not None else len(files)
+                ),
+            },
+            {
+                "head": {"sha": post_head_sha},
+                "base": {"sha": post_base_sha},
+                "changed_files": (
+                    changed_counts[1] if changed_counts is not None else len(files)
+                ),
+            },
+        ]
+        event_path = root / "event.json"
+        event_path.write_text(
+            json.dumps(
+                {
+                    "number": 11,
+                    "repository": {"full_name": "ekow74/tia-devops"},
+                    "pull_request": {
+                        "head": {"sha": event_head_sha},
+                        "base": {"sha": base_ref_sha, "ref": base_ref},
+                    },
+                }
+            )
+        )
+        env = {
+            "GITHUB_API_URL": "https://api.github.test",
+            "GITHUB_EVENT_PATH": str(event_path),
+            "GITHUB_REPOSITORY": "ekow74/tia-devops",
+            "GITHUB_RUN_ID": "123",
+            "GITHUB_SERVER_URL": "https://github.com",
+            "GITHUB_TOKEN": "test-token",
+            "GITHUB_WORKFLOW_SHA": workflow_sha_override or trusted_sha,
+            "KSP_TRUSTED_SHA": trusted_env_sha or workflow_sha_override or trusted_sha,
+            "KSP_BASE_SHA": base_ref_sha,
+            "KSP_DEFAULT_BRANCH": "main",
+            "KSP_EVENT_BASE_REF": base_ref,
+            "KSP_EVENT_HEAD_SHA": SHA,
+            "KSP_PR_NUMBER": "11",
+        }
+        pr_index = 0
+
+        def fake_api_get(_api_root: str, route: str, _token: str):
+            nonlocal pr_index
+            parsed = urllib.parse.urlsplit(route)
+            if parsed.path.endswith("/pulls/11"):
+                result = pr_snapshots[pr_index]
+                pr_index += 1
+                return result, None
+            page = int(urllib.parse.parse_qs(parsed.query)["page"][0])
+            start = (page - 1) * review.PAGE_SIZE
+            page_files = files[start : start + review.PAGE_SIZE]
+            link = (
+                "<https://api.github.test/repositories/123/pulls/11/files?"
+                f"per_page=100&page={page + 1}>; rel=\"next\""
+                if len(page_files) == review.PAGE_SIZE
+                else None
+            )
+            return page_files, link
+
+        output = io.StringIO()
+        try:
+            with mock.patch.object(review, "_api_get", side_effect=fake_api_get):
+                with contextlib.redirect_stdout(output):
+                    result = review.run_gate(env, trusted_root=root)
+            return result, None, output.getvalue(), trusted_sha, expected_workflow_version
+        except Exception as exc:
+            return None, exc, output.getvalue(), trusted_sha, expected_workflow_version
 
 
 class Phase0ReviewGateTests(unittest.TestCase):
@@ -91,45 +211,97 @@ class Phase0ReviewGateTests(unittest.TestCase):
     def test_pagination_requires_consistent_complete_pages(self):
         pages = {
             1: ([{"filename": f"file-{i}", "status": "added"} for i in range(100)],
-                '<https://api.github.com/next?page=2>; rel="next"'),
+                '<https://api.github.com/repositories/123/pulls/11/files?per_page=100&page=2>; rel="next"'),
             2: ([{"filename": "last", "status": "added"}], None),
         }
-        result = review.collect_paginated_files(lambda page: pages[page])
+        result = review.collect_paginated_files(lambda page: pages.get(page, ([], None)), 101)
         self.assertEqual(len(result), 101)
 
-        with self.assertRaisesRegex(review.GateError, "missing its next-page link"):
-            review.collect_paginated_files(
-                lambda _page: (
-                    [{"filename": f"file-{i}", "status": "added"} for i in range(100)],
-                    None,
-                )
-            )
-        with self.assertRaisesRegex(review.GateError, "inconsistent"):
-            review.collect_paginated_files(
-                lambda _page: (
-                    [{"filename": "last", "status": "added"}],
-                    '<https://api.github.com/next?page=2>; rel="next"',
-                )
-            )
+        for count in (99, 100, 101, 200, 3000):
+            entries = [
+                {"filename": f"file-{index}", "status": "added"}
+                for index in range(count)
+            ]
+            requested_pages: list[int] = []
 
-    def test_pagination_cap_fails_instead_of_accepting_truncation(self):
+            def fetch(page: int):
+                requested_pages.append(page)
+                start = (page - 1) * review.PAGE_SIZE
+                return entries[start : start + review.PAGE_SIZE], (
+                    '<https://api.github.com/repositories/123/pulls/11/files?'
+                    f'per_page=100&page={page + 1}>; rel="next"'
+                    if start + review.PAGE_SIZE < count
+                    else None
+                )
+
+            self.assertEqual(
+                review.collect_paginated_files(fetch, count), entries
+            )
+            self.assertEqual(requested_pages[-1], (count + 99) // 100 + (count % 100 == 0 and count < 3000))
+
+    def test_pagination_count_and_duplicate_entries_fail_closed(self):
         def full_page(_page):
             return (
                 [{"filename": "file.txt", "status": "added"}] * 100,
                 '<https://api.github.com/next?page=2>; rel="next"',
             )
 
-        with self.assertRaisesRegex(review.GateError, "pagination bound"):
-            review.collect_paginated_files(full_page)
-
-    def test_api_pagination_link_must_stay_on_expected_page(self):
-        with self.assertRaisesRegex(review.GateError, "outside the expected API page"):
-            review._page_link_is_expected(
-                '<https://attacker.example/file?page=2>; rel="next"',
-                api_root="https://api.github.com",
-                route="/repos/ekow74/tia-devops/pulls/11/files",
-                page=1,
+        with self.assertRaisesRegex(review.GateError, "outside the API completeness bound"):
+            review.collect_paginated_files(full_page, 3001)
+        with self.assertRaisesRegex(review.GateError, "duplicate filename"):
+            review.collect_paginated_files(
+                lambda _page: (
+                    [{"filename": "same.txt", "status": "added"}] * 2,
+                    None,
+                ),
+                2,
             )
+        with self.assertRaisesRegex(review.GateError, "disagrees with pull-request metadata"):
+            review.collect_paginated_files(
+                lambda _page: ([{"filename": "one.txt", "status": "added"}], None),
+                2,
+            )
+
+    def test_api_listing_uses_local_pages_and_ignores_link_targets(self):
+        requests: list[str] = []
+
+        def fake_api_get(_api_root: str, route: str, _token: str):
+            requests.append(route)
+            parsed = urllib.parse.urlsplit(route)
+            page = int(urllib.parse.parse_qs(parsed.query)["page"][0])
+            if page == 1:
+                return (
+                    [{"filename": f"file-{index}", "status": "added"} for index in range(100)],
+                    '<https://api.github.com/repositories/123/pulls/11/files?per_page=100&page=2>; rel="next"',
+                )
+            return ([{"filename": "last", "status": "added"}], None)
+
+        with mock.patch.object(review, "_api_get", side_effect=fake_api_get):
+            files = review._api_file_listing(
+                "https://api.github.com", "ekow74/tia-devops", 11, "test-token", 101
+            )
+        self.assertEqual(len(files), 101)
+        self.assertEqual(len(requests), 2)
+        self.assertIn("page=1", requests[0])
+        self.assertIn("page=2", requests[1])
+
+    def test_api_transport_refuses_redirects(self):
+        handler = review._RejectRedirects()
+        request = urllib.request.Request("https://api.github.com/test")
+        self.assertIsNone(
+            handler.redirect_request(request, None, 302, "Found", {}, "https://evil.invalid")
+        )
+        opener = mock.Mock()
+        opener.open.side_effect = urllib.error.HTTPError(
+            "https://api.github.com/test", 302, "Found", {}, None
+        )
+        with mock.patch.object(
+            review.urllib.request, "build_opener", return_value=opener
+        ) as build_opener:
+            with self.assertRaises(review.GateError):
+                review._api_get("https://api.github.com", "/test", "test-token")
+        self.assertIsInstance(build_opener.call_args.args[0], review._RejectRedirects)
+        opener.open.assert_called_once()
 
     def test_strict_verdict_schema_and_exact_bindings(self):
         value = envelope("UNAVAILABLE", "provider-unconfigured", False)
@@ -138,6 +310,7 @@ class Phase0ReviewGateTests(unittest.TestCase):
             "pr_number": 11,
             "head_sha": SHA,
             "base_sha": BASE,
+            "policy_sha": POLICY_SHA,
             "run_id": 123,
         }
         self.assertEqual(
@@ -146,6 +319,7 @@ class Phase0ReviewGateTests(unittest.TestCase):
         for mutate in (
             lambda v: v.update(extra="field"),
             lambda v: v.update(head_sha="HEAD"),
+            lambda v: v.update(policy_sha="bad"),
             lambda v: v.update(run_id=124),
             lambda v: v.update(verdict="NOT_REQUIRED", reviewer_identity="not-reviewed"),
             lambda v: v.update(
@@ -169,6 +343,88 @@ class Phase0ReviewGateTests(unittest.TestCase):
                 envelope("NOT_REQUIRED", "offline-test-adapter", True),
                 protected=False,
             )
+
+    def test_run_gate_uses_workflow_source_sha_separate_from_pr_base(self):
+        result, error, output, trusted_sha, workflow_version = exercise_run_gate(
+            [{"filename": "docs/readme.md", "status": "modified"}]
+        )
+        self.assertIsNone(error)
+        self.assertEqual(result["verdict"], "NOT_REQUIRED")
+        self.assertFalse(result["reviewed"])
+        self.assertEqual(result["base_sha"], BASE)
+        self.assertEqual(result["policy_sha"], trusted_sha)
+        self.assertNotEqual(result["policy_sha"], result["base_sha"])
+        self.assertEqual(result["workflow_version"], workflow_version)
+        self.assertIn('"policy_sha":', output)
+
+    def test_run_gate_rejects_context_checkout_and_pr_races(self):
+        cases = (
+            (
+                "event head mismatch",
+                {"event_head_sha": "e" * 40},
+                "workflow event binding is invalid",
+            ),
+            (
+                "workflow source context mismatch",
+                {"trusted_env_sha": "c" * 40},
+                "workflow event binding is invalid",
+            ),
+            (
+                "non-default base",
+                {"base_ref": "release"},
+                "workflow event binding is invalid",
+            ),
+            (
+                "checkout mismatch",
+                {"advance_checkout": True},
+                "trusted checkout does not match the workflow source SHA",
+            ),
+            (
+                "head changed after listing",
+                {"post_head_sha": "f" * 40},
+                "pull request head or base changed during review",
+            ),
+            (
+                "base changed after listing",
+                {"post_base_sha": "f" * 40},
+                "pull request head or base changed during review",
+            ),
+            (
+                "metadata file count changed",
+                {"changed_counts": (1, 2)},
+                "pull-request file count changed during classification",
+            ),
+        )
+        for label, kwargs, expected_error in cases:
+            with self.subTest(case=label):
+                _, error, _, _, _ = exercise_run_gate(
+                    [{"filename": "docs/readme.md", "status": "modified"}],
+                    **kwargs,
+                )
+                self.assertIsInstance(error, review.GateError)
+                self.assertIn(expected_error, str(error))
+
+    def test_run_gate_fails_closed_for_incomplete_and_protected_listings(self):
+        _, error, _, _, _ = exercise_run_gate(
+            [{"filename": "docs/readme.md", "status": "modified"}],
+            changed_counts=(2, 2),
+        )
+        self.assertIsInstance(error, review.GateError)
+        self.assertIn("disagrees with pull-request metadata", str(error))
+        _, error, _, _, _ = exercise_run_gate(
+            [{"filename": "docs/readme.md", "status": "modified"}],
+            changed_counts=(3001, 3001),
+        )
+        self.assertIsInstance(error, review.GateError)
+        self.assertIn("exceeds 3000", str(error))
+
+        _, error, output, _, _ = exercise_run_gate(
+            [{"filename": "protected/file.txt", "status": "modified"}]
+        )
+        self.assertIsInstance(error, review.GateError)
+        self.assertIn("no authorized independent reviewer", str(error))
+        self.assertEqual(json.loads(output)["verdict"], "UNAVAILABLE")
+        self.assertEqual(json.loads(output)["reviewer_identity"], "provider-unconfigured")
 
     def test_test_adapter_does_not_follow_injected_instructions(self):
         fixture = json.loads((FIXTURES / "prompt-injection.json").read_text())
@@ -265,6 +521,16 @@ class Phase0ReviewGateTests(unittest.TestCase):
                 authority.validate_workflow_permissions(
                     ".github/workflows/untrusted.yml", workflow, POLICY
                 )
+
+        with self.assertRaisesRegex(ValueError, "exact reviewed exception"):
+            authority.validate_workflow_permissions(
+                ".github/workflows/security-deep.yml",
+                "on: [schedule, workflow_dispatch]\n"
+                "permissions: {contents: read}\n"
+                "jobs: {scorecard: {permissions: {contents: read, id-token: write, "
+                "security-events: write, actions: write}, runs-on: ubuntu-latest}}",
+                POLICY,
+            )
 
         for workflow in (
             "on: pull_request_target\npermissions: {checks: write}\n"
@@ -408,6 +674,7 @@ class Phase0ReviewGateTests(unittest.TestCase):
             git(repo, "commit", "-q", "-m", "trusted base")
             base = git(repo, "rev-parse", "HEAD")
             (repo / ".github/workflows/not-a-workflow.txt").write_text("data")
+            (repo / ".github/workflows/uppercase.YML").write_text("data")
             git(repo, "add", ".")
             git(repo, "commit", "-q", "-m", "unexpected workflow entry")
             head = git(repo, "rev-parse", "HEAD")
@@ -506,6 +773,7 @@ class Phase0ReviewGateTests(unittest.TestCase):
             head_policy["reviewed_authority_paths"] = [
                 ".github/workflows/reviewer-workflow-spoof.yml"
             ]
+            head_policy["reserved_check_names"] = ["head-controlled nonreserved name"]
             policy_path.write_text(json.dumps(head_policy))
             git(repo, "add", ".")
             git(repo, "commit", "-q", "-m", "untrusted workflow and policy")
@@ -517,6 +785,23 @@ class Phase0ReviewGateTests(unittest.TestCase):
                     "checks/statuses write is outside reviewed authority paths",
                 ):
                     authority.validate_head_workflow_permissions(base, head)
+
+                spoof.write_text(
+                    "on:\n  pull_request:\n"
+                    "permissions:\n  contents: read\n"
+                    "jobs:\n  counterfeit:\n"
+                    "    name: KSP Independent Review\n"
+                    "    runs-on: ubuntu-latest\n"
+                    "    steps:\n      - run: exit 0\n"
+                )
+                git(repo, "add", ".")
+                git(repo, "commit", "-q", "-m", "read-only check-name spoof")
+                read_only_head = git(repo, "rev-parse", "HEAD")
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "reserved check name outside safe authority context",
+                ):
+                    authority.validate_head_workflow_permissions(base, read_only_head)
             finally:
                 authority.configure_repo(REPO_ROOT)
 
@@ -527,7 +812,9 @@ class Phase0ReviewGateTests(unittest.TestCase):
             "types: [opened, synchronize, reopened, ready_for_review, edited]", text
         )
         self.assertIn("cancel-in-progress: true", text)
-        self.assertIn("ref: ${{ github.event.pull_request.base.sha }}", text)
+        self.assertIn("KSP_BASE_SHA: ${{ github.event.pull_request.base.sha }}", text)
+        self.assertIn("KSP_TRUSTED_SHA: ${{ github.workflow_sha }}", text)
+        self.assertIn("ref: ${{ github.workflow_sha }}", text)
         self.assertIn("persist-credentials: false", text)
         self.assertNotIn("checks: write", text)
         self.assertNotIn("statuses: write", text)
@@ -544,6 +831,12 @@ class Phase0ReviewGateTests(unittest.TestCase):
         self.assertIn("--require-hashes -r ksp-bootstrap/requirements-ci.txt", text)
         self.assertIn("--only-binary=:all:", text)
         self.assertIn("--no-deps", text)
+        ci = CI_WORKFLOW.read_text()
+        self.assertIn("  pull_request:", ci)
+        self.assertIn(
+            "--require-hashes -r ksp-bootstrap/requirements-ci.txt", ci
+        )
+        self.assertIn("bash scripts/ci/validate_devops_umbrella.sh", ci)
 
     def test_all_current_workflows_have_decodable_permissions(self):
         for path in sorted((REPO_ROOT / ".github/workflows").glob("*.y*ml")):

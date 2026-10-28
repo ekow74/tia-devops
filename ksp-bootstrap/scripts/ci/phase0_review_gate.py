@@ -16,7 +16,8 @@ from typing import Any, Callable, Protocol
 WORKFLOW_PATH = ".github/workflows/phase0-review-gate.yml"
 POLICY_PATH = "ksp-bootstrap/policies/protected-paths.txt"
 PAGE_SIZE = 100
-MAX_PAGES = 30
+MAX_FILES = 3000
+MAX_PAGES = MAX_FILES // PAGE_SIZE
 SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 REPOSITORY_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 VERDICT_KEYS = {
@@ -25,6 +26,7 @@ VERDICT_KEYS = {
     "pr_number",
     "head_sha",
     "base_sha",
+    "policy_sha",
     "reviewer_identity",
     "verdict",
     "artifact_reference",
@@ -122,37 +124,31 @@ def classify_files(files: list[dict[str, Any]], patterns: list[str]) -> list[str
 
 def collect_paginated_files(
     fetch_page: Callable[[int], tuple[list[dict[str, Any]], str | None]],
+    expected_count: int,
 ) -> list[dict[str, Any]]:
+    if type(expected_count) is not int or not 0 <= expected_count <= MAX_FILES:
+        raise GateError("pull-request file count is outside the API completeness bound")
     files: list[dict[str, Any]] = []
+    seen_filenames: set[str] = set()
     for page in range(1, MAX_PAGES + 1):
-        rows, link_header = fetch_page(page)
+        rows, _link_header = fetch_page(page)
         if not isinstance(rows, list) or len(rows) > PAGE_SIZE:
             raise GateError("file listing page is malformed")
-        has_next = _next_link(link_header)
-        if len(rows) == PAGE_SIZE:
-            if not has_next:
-                raise GateError("full file-list page is missing its next-page link")
-            if page == MAX_PAGES:
-                raise GateError("file listing exceeds the API's complete-pagination bound")
-            files.extend(rows)
-            continue
-        if has_next:
-            raise GateError("file-list pagination link is inconsistent with page size")
+        for item in rows:
+            if not isinstance(item, dict):
+                raise GateError("file listing contains a malformed entry")
+            filename = _validate_path(item.get("filename"))
+            if filename in seen_filenames:
+                raise GateError("file listing contains a duplicate filename")
+            seen_filenames.add(filename)
         files.extend(rows)
+        if len(rows) < PAGE_SIZE:
+            if len(files) != expected_count:
+                raise GateError("complete file listing disagrees with pull-request metadata")
+            return files
+    if expected_count == MAX_FILES and len(files) == MAX_FILES:
         return files
-    raise GateError("file listing pagination did not complete")
-
-
-def _next_link(link_header: str | None) -> bool:
-    if not link_header:
-        return False
-    for item in link_header.split(","):
-        match = re.fullmatch(r'\s*<([^>]+)>\s*;\s*rel="?([^";]+)"?\s*', item)
-        if not match:
-            raise GateError("file-list pagination header is malformed")
-        if match.group(2).strip() == "next":
-            return True
-    return False
+    raise GateError("file listing exceeds the API's complete-pagination bound")
 
 
 def make_verdict(
@@ -161,6 +157,7 @@ def make_verdict(
     pr_number: int,
     head_sha: str,
     base_sha: str,
+    policy_sha: str,
     reviewer_identity: str,
     verdict: str,
     artifact_reference: str,
@@ -174,6 +171,7 @@ def make_verdict(
         "pr_number": pr_number,
         "head_sha": head_sha,
         "base_sha": base_sha,
+        "policy_sha": policy_sha,
         "reviewer_identity": reviewer_identity,
         "verdict": verdict,
         "artifact_reference": artifact_reference,
@@ -203,7 +201,7 @@ def validate_verdict(
         raise GateError("review verdict PR number is invalid")
     if not all(
         isinstance(value[key], str) and SHA_RE.fullmatch(value[key])
-        for key in ("head_sha", "base_sha")
+        for key in ("head_sha", "base_sha", "policy_sha")
     ):
         raise GateError("review verdict commit binding is invalid")
     if not isinstance(value["reviewer_identity"], str) or value[
@@ -266,9 +264,21 @@ def validate_verdict(
     return value
 
 
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _api_get(api_root: str, route: str, token: str) -> tuple[Any, str | None]:
     root = urllib.parse.urlsplit(api_root)
-    if root.scheme != "https" or not root.netloc or root.query or root.fragment:
+    if (
+        root.scheme != "https"
+        or not root.netloc
+        or root.username
+        or root.password
+        or root.query
+        or root.fragment
+    ):
         raise GateError("GitHub API URL must be an HTTPS origin")
     url = api_root.rstrip("/") + route
     request = urllib.request.Request(
@@ -280,45 +290,16 @@ def _api_get(api_root: str, route: str, token: str) -> tuple[Any, str | None]:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        opener = urllib.request.build_opener(_RejectRedirects())
+        with opener.open(request, timeout=10) as response:
             payload = json.loads(response.read())
             return payload, response.headers.get("Link")
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise GateError("bounded GitHub read request failed") from exc
 
 
-def _page_link_is_expected(
-    link_header: str | None, *, api_root: str, route: str, page: int
-) -> str | None:
-    if not link_header:
-        return None
-    next_url: str | None = None
-    for item in link_header.split(","):
-        match = re.fullmatch(r'\s*<([^>]+)>\s*;\s*rel="?([^";]+)"?\s*', item)
-        if not match:
-            raise GateError("file-list pagination header is malformed")
-        if match.group(2).strip() == "next":
-            next_url = match.group(1)
-    if next_url is None:
-        return None
-    expected = urllib.parse.urlsplit(
-        api_root.rstrip("/") + route + f"?per_page={PAGE_SIZE}&page={page + 1}"
-    )
-    actual = urllib.parse.urlsplit(next_url)
-    if (
-        actual.scheme != "https"
-        or actual.netloc != expected.netloc
-        or actual.path != expected.path
-        or urllib.parse.parse_qs(actual.query)
-        != {"per_page": [str(PAGE_SIZE)], "page": [str(page + 1)]}
-        or actual.fragment
-    ):
-        raise GateError("file-list pagination points outside the expected API page")
-    return next_url
-
-
 def _api_file_listing(
-    api_root: str, repository: str, pr_number: int, token: str
+    api_root: str, repository: str, pr_number: int, token: str, expected_count: int
 ) -> list[dict[str, Any]]:
     route = f"/repos/{urllib.parse.quote(repository, safe='/')}/pulls/{pr_number}/files"
 
@@ -327,18 +308,9 @@ def _api_file_listing(
         payload, header = _api_get(api_root, f"{route}?{query}", token)
         if not isinstance(payload, list):
             raise GateError("GitHub file-list response is malformed")
-        next_url = _page_link_is_expected(
-            header, api_root=api_root, route=route, page=page
-        )
-        if len(payload) == PAGE_SIZE and not next_url:
-            raise GateError("full file-list page is missing its next-page link")
-        if len(payload) < PAGE_SIZE and next_url:
-            raise GateError("file-list pagination link is inconsistent with page size")
-        return payload, (
-            f"<{next_url}>; rel=\"next\"" if next_url is not None else None
-        )
+        return payload, header
 
-    return collect_paginated_files(fetch)
+    return collect_paginated_files(fetch, expected_count)
 
 
 def _load_json_object(payload: Any) -> dict[str, Any]:
@@ -355,9 +327,16 @@ def _current_pr(
     return _load_json_object(payload)
 
 
+def _pr_changed_files(pr: dict[str, Any]) -> int:
+    count = pr.get("changed_files")
+    if type(count) is not int or count < 0 or count > MAX_FILES:
+        raise GateError("pull-request changed_files count is invalid or exceeds 3000")
+    return count
+
+
 def _match_pr_binding(
     pr: dict[str, Any], *, head_sha: str, base_sha: str
-) -> None:
+) -> int:
     try:
         actual_head = pr["head"]["sha"]
         actual_base = pr["base"]["sha"]
@@ -365,27 +344,33 @@ def _match_pr_binding(
         raise GateError("GitHub pull-request binding is incomplete") from exc
     if actual_head != head_sha or actual_base != base_sha:
         raise GateError("pull request head or base changed during review")
+    return _pr_changed_files(pr)
 
 
-def _workflow_version(base_sha: str, root: Path) -> str:
-    blob = subprocess.check_output(
-        ["git", "rev-parse", f"{base_sha}:{WORKFLOW_PATH}"],
-        cwd=root,
-        text=True,
-        stderr=subprocess.DEVNULL,
-    ).strip()
+def _workflow_version(trusted_sha: str, root: Path) -> str:
+    try:
+        blob = subprocess.check_output(
+            ["git", "rev-parse", f"{trusted_sha}:{WORKFLOW_PATH}"],
+            cwd=root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except subprocess.CalledProcessError as exc:
+        raise GateError("trusted reviewer workflow is missing from policy commit") from exc
+    if not re.fullmatch(r"[0-9a-f]{40}", blob):
+        raise GateError("trusted reviewer workflow blob ID is invalid")
     return f"phase0-review/v0+{blob}"
 
 
-def _verify_trusted_base(base_sha: str, root: Path) -> None:
+def _verify_trusted_base(trusted_sha: str, root: Path) -> None:
     checked_out = subprocess.check_output(
         ["git", "rev-parse", "HEAD"],
         cwd=root,
         text=True,
         stderr=subprocess.DEVNULL,
     ).strip()
-    if checked_out != base_sha:
-        raise GateError("trusted checkout does not match the event base SHA")
+    if checked_out != trusted_sha:
+        raise GateError("trusted checkout does not match the workflow source SHA")
 
 
 def _write_summary(verdict: dict[str, Any]) -> None:
@@ -410,6 +395,8 @@ def _write_summary(verdict: dict[str, Any]) -> None:
 def run_gate(
     env: dict[str, str] | None = None,
     reviewer_adapter: ReviewerAdapter | None = None,
+    *,
+    trusted_root: Path | None = None,
 ) -> dict[str, Any]:
     env = dict(os.environ if env is None else env)
     required = (
@@ -424,6 +411,8 @@ def run_gate(
         "KSP_EVENT_BASE_REF",
         "KSP_EVENT_HEAD_SHA",
         "KSP_PR_NUMBER",
+        "KSP_TRUSTED_SHA",
+        "GITHUB_WORKFLOW_SHA",
     )
     if any(not env.get(name) for name in required):
         raise GateError("required trusted workflow context is missing")
@@ -449,6 +438,7 @@ def run_gate(
         raise GateError("workflow event is missing pull-request bindings") from exc
     if (
         event_repository != repository
+        or type(event_number) is not int
         or event_number != pr_number
         or head_sha != env["KSP_EVENT_HEAD_SHA"]
         or base_sha != env["KSP_BASE_SHA"]
@@ -456,26 +446,42 @@ def run_gate(
         or base_ref != env["KSP_DEFAULT_BRANCH"]
         or not SHA_RE.fullmatch(head_sha)
         or not SHA_RE.fullmatch(base_sha)
+        or env["KSP_TRUSTED_SHA"] != env["GITHUB_WORKFLOW_SHA"]
+        or not SHA_RE.fullmatch(env["GITHUB_WORKFLOW_SHA"])
     ):
         raise GateError("workflow event binding is invalid or not based on default branch")
 
-    root = Path(__file__).resolve().parents[3]
-    _verify_trusted_base(base_sha, root)
-    workflow_version = _workflow_version(base_sha, root)
+    root = (trusted_root or Path(__file__).resolve().parents[3]).resolve()
+    policy_sha = env["GITHUB_WORKFLOW_SHA"]
+    _verify_trusted_base(policy_sha, root)
+    workflow_version = _workflow_version(policy_sha, root)
     api_root = env["GITHUB_API_URL"]
     token = env["GITHUB_TOKEN"]
-    _match_pr_binding(
+    before_count = _match_pr_binding(
         _current_pr(api_root, repository, pr_number, token),
         head_sha=head_sha,
         base_sha=base_sha,
     )
-    files = _api_file_listing(api_root, repository, pr_number, token)
-    _match_pr_binding(
+    files = _api_file_listing(
+        api_root, repository, pr_number, token, expected_count=before_count
+    )
+    after_count = _match_pr_binding(
         _current_pr(api_root, repository, pr_number, token),
         head_sha=head_sha,
         base_sha=base_sha,
     )
-    patterns = parse_patterns((root / POLICY_PATH).read_text(encoding="utf-8"))
+    if after_count != before_count:
+        raise GateError("pull-request file count changed during classification")
+    try:
+        pattern_text = subprocess.check_output(
+            ["git", "show", f"{policy_sha}:{POLICY_PATH}"],
+            cwd=root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise GateError("trusted protected-path policy is missing from policy commit") from exc
+    patterns = parse_patterns(pattern_text)
     protected_paths = classify_files(files, patterns)
     if protected_paths:
         adapter = reviewer_adapter or UnconfiguredAdapter()
@@ -495,6 +501,7 @@ def run_gate(
         pr_number=pr_number,
         head_sha=head_sha,
         base_sha=base_sha,
+        policy_sha=policy_sha,
         reviewer_identity=identity,
         verdict=verdict_value,
         artifact_reference=run_reference,
@@ -510,6 +517,7 @@ def run_gate(
             "pr_number": pr_number,
             "head_sha": head_sha,
             "base_sha": base_sha,
+            "policy_sha": policy_sha,
             "reviewer_identity": identity,
             "verdict": verdict_value,
             "artifact_reference": run_reference,

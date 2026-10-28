@@ -205,9 +205,11 @@ def _validate_effective_permissions(
 ) -> None:
     reviewed_path = path in policy["reviewed_authority_paths"]
     target_only = triggers == PULL_REQUEST_TARGET_EVENTS
-    normalized_name = re.sub(r"[-_]+", " ", display_name).casefold()
+    normalized_name = " ".join(
+        re.sub(r"[-_]+", " ", display_name).casefold().split()
+    )
     reserved_names = {
-        re.sub(r"[-_]+", " ", name).casefold()
+        " ".join(re.sub(r"[-_]+", " ", name).casefold().split())
         for name in policy["reserved_check_names"]
     }
     if normalized_name in reserved_names and not (
@@ -269,6 +271,8 @@ def validate_workflow_permissions(
         if (
             not isinstance(display_name, str)
             or not display_name.strip()
+            or "\n" in display_name
+            or "\r" in display_name
             or "${{" in display_name
             or "}}" in display_name
         ):
@@ -296,7 +300,7 @@ def validate_head_workflow_permissions(base: str, head: str) -> None:
     listing = run("git", "ls-tree", "-r", "-z", "--name-only", head, "--", ".github/workflows")
     paths = listing.rstrip("\0").split("\0") if listing else []
     if not paths:
-        raise ValueError("PR head contains no workflow files")
+        return
     policy = _load_json(git_show(base, AUTHORITY_POLICY_PATH), AUTHORITY_POLICY_PATH)
     _validate_authority_policy(policy)
     for path in paths:

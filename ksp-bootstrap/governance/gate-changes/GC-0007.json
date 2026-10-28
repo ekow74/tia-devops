@@ -1,12 +1,13 @@
 {
   "gate_change_id": "GC-0007",
   "decision_log_id": "D-0023",
-  "reason": "Draft the non-production Phase-0 base-trusted independent-review scaffold, strict verdict binding, paginated protected-path classification, and checks/statuses write policy without provider credentials or promotion.",
+  "reason": "Draft the non-production Phase-0 base-trusted independent-review scaffold, strict verdict/source binding, bounded complete protected-path classification, reserved-check-name defenses, and workflow-write policy without provider credentials or promotion.",
   "reviewer_kind": "CLAUDE",
   "review_status": "PENDING_EXTERNAL_BASE_LEDGER",
   "review_reference": "KSP_GateChange_GC0007_REVIEW_v1.0_2026-10-27",
   "approval_threshold": "Offline unit and policy fixtures pass; base-trusted read-only workflow and strict SHA/run binding reviewed; all Q0-Q5 live qualifications and owner prerequisites remain explicitly pending",
   "scope": [
+    ".gitignore",
     ".github/workflows/ksp-gate-authority.yml",
     ".github/workflows/phase0-review-gate.yml",
     "governance/workflow-exceptions/pull-request-target.txt",

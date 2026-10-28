@@ -27,11 +27,12 @@ jobs:
       KSP_EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
       KSP_EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       KSP_PR_NUMBER: ${{ github.event.pull_request.number }}
+      KSP_TRUSTED_SHA: ${{ github.workflow_sha }}
     steps:
-      - name: Checkout the exact trusted PR base
+      - name: Checkout the trusted workflow source commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
 
