@@ -1,0 +1,30 @@
+{
+  "gate_change_id": "GC-0008",
+  "decision_log_id": "D-0023",
+  "reason": "Add the focused Pack Builder ReleaseLot S02 state, identity, RecallEvent, TRUNCATE, and concurrency controls and register their source package as review-required.",
+  "reviewer_kind": "CLAUDE",
+  "review_status": "PENDING_EXTERNAL_BASE_LEDGER",
+  "review_reference": "KSP_Pack_Builder_ReleaseLot_Claude_Review_v1.1_and_Handoff_v1.0",
+  "approval_threshold": "M1 explicit 25-pair state machine and immutable identity; M2 recall-safe pin/freeze; N1 append-only RecallEvent and N2 zero-match rejection; m1-m4 controls; m5 review lock order; m6 isolation, timeout and operational evidence; m7 metadata semantics recorded unresolved; m8 freeze row-lock regression with mutation check; m9 temporary canonical DDL; PostgreSQL 18 canonical DDL qualification and independent final-head review",
+  "scope": [
+    ".github/workflows/pack-builder-release-lot-db.yml",
+    "ksp-bootstrap/governance/gate-changes/GC-0008.json",
+    "ksp-bootstrap/policies/protected-paths.txt",
+    "ksp-pack-builder/README.md",
+    "ksp-pack-builder/review/Pack_Builder_ReleaseLot_S02_review.txt",
+    "ksp-pack-builder/review/SHA256SUMS.txt",
+    "ksp-pack-builder/sql/phase0_schema.parts/001.part",
+    "ksp-pack-builder/sql/phase0_schema.parts/002.part",
+    "ksp-pack-builder/sql/phase0_schema.parts/003.part",
+    "ksp-pack-builder/sql/phase0_schema.parts/004.part",
+    "ksp-pack-builder/sql/phase0_schema.parts/005.part",
+    "ksp-pack-builder/sql/release_lot_controls.sql",
+    "ksp-pack-builder/tests/release_lot_additional_regression.sql",
+    "ksp-pack-builder/tests/release_lot_fixture_schema.sql",
+    "ksp-pack-builder/tests/release_lot_regression.sql",
+    "ksp-pack-builder/tests/run_postgres_ddl.sh",
+    "ksp-pack-builder/tests/run_release_lot_concurrency.sh",
+    "ksp-pack-builder/tests/run_release_lot_isolation.sh"
+  ],
+  "note": "This is a pending GateChange proposal, not an approval receipt or independent verification. D-0023 is cited only for the applicable governance boundary that approval artifacts are evidence and do not grant merge authorization; it does not approve these implementation changes. No implementation-specific owner decision or approval is recorded; provenance remains pending owner and independent review. No approval file is added or modified. Trusted-base GateChange approval and independent Claude review of the final exact head remain required; the PR must remain draft."
+}

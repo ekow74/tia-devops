@@ -1,0 +1,145 @@
+name: KSP Pack Builder Release-Lot DB Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'ksp-pack-builder/**'
+      - '.github/workflows/pack-builder-release-lot-db.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ksp-pack-builder-db-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres18-release-lot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: ksp-ci-only
+          POSTGRES_DB: ksp_pack_builder
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d ksp_pack_builder"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+
+    env:
+      PGPASSWORD: ksp-ci-only
+      DATABASE_URL: postgresql://postgres@127.0.0.1:5432/ksp_pack_builder
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install PostgreSQL client
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client >/dev/null
+
+      - name: Assert PostgreSQL 18 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          version_num=$(psql "$DATABASE_URL" -Atc 'SHOW server_version_num')
+          version_text=$(psql "$DATABASE_URL" -Atc 'SELECT version()')
+          echo "server_version_num=$version_num"
+          echo "$version_text"
+          if (( version_num < 180000 || version_num >= 190000 )); then
+            echo "expected PostgreSQL 18.x, got $version_num" >&2
+            exit 1
+          fi
+
+      - name: Load exact canonical shipped phase0_schema.sql
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ksp-pack-builder/tests/run_postgres_ddl.sh
+          ksp-pack-builder/tests/run_postgres_ddl.sh
+          test ! -e ksp-pack-builder/sql/phase0_schema.sql
+
+      - name: Verify the canonical shipped schema SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          canonical=$(mktemp)
+          trap 'rm -f "$canonical"' EXIT
+          cat ksp-pack-builder/sql/phase0_schema.parts/*.part \
+            ksp-pack-builder/sql/release_lot_controls.sql > "$canonical"
+          actual=$(sha256sum "$canonical" | awk '{print $1}')
+          echo "canonical_schema_sha256=$actual"
+          test "$actual" = "e3198f1c6ddc81ba41165857708616ecc379e26a4eaeae56332e5a4d2898950c"
+
+      - name: Run RL1/RL2/RL4/RL5 and positive-path regressions on real DDL
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -f ksp-pack-builder/tests/release_lot_regression.sql
+
+      - name: Run terminal-state RecallEvent and lot-delete regressions
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -f ksp-pack-builder/tests/release_lot_additional_regression.sql
+
+      - name: Prove stronger transaction isolation fails closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ksp-pack-builder/tests/run_release_lot_isolation.sh
+          ksp-pack-builder/tests/run_release_lot_isolation.sh
+
+      - name: Run approval-withdrawal and RecallEvent concurrency qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ksp-pack-builder/tests/run_release_lot_concurrency.sh
+          ksp-pack-builder/tests/run_release_lot_concurrency.sh
+
+      - name: Verify expected control objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -At <<'SQL' | sort > /tmp/triggers.txt
+          SELECT tgname
+          FROM pg_trigger
+          WHERE NOT tgisinternal
+            AND tgname IN (
+              'trg_release_lot_claim_mutation',
+              'trg_release_lot_delete_guard',
+              'trg_release_lot_state_transition',
+              'trg_release_lot_integrity_gate',
+              'trg_release_lot_claim_integrity_gate',
+              'trg_claim_revision_release_lot_integrity_gate',
+              'trg_recall_event_release_lot_integrity_gate',
+              'trg_recall_event_append_only',
+              'trg_recall_event_truncate_guard',
+              'trg_release_lot_claim_truncate_guard',
+              'trg_release_lot_truncate_guard',
+              'trg_claim_revision_release_lot_quarantine',
+              'trg_recall_event_release_lot_quarantine',
+              'trg_human_dual_review_release_lot_integrity_gate'
+            );
+          SQL
+          diff -u <(printf '%s\n' \
+            trg_claim_revision_release_lot_quarantine \
+            trg_claim_revision_release_lot_integrity_gate \
+            trg_human_dual_review_release_lot_integrity_gate \
+            trg_recall_event_append_only \
+            trg_recall_event_release_lot_integrity_gate \
+            trg_recall_event_release_lot_quarantine \
+            trg_recall_event_truncate_guard \
+            trg_release_lot_claim_truncate_guard \
+            trg_release_lot_truncate_guard \
+            trg_release_lot_claim_integrity_gate \
+            trg_release_lot_claim_mutation \
+            trg_release_lot_delete_guard \
+            trg_release_lot_integrity_gate \
+            trg_release_lot_state_transition | sort) /tmp/triggers.txt
+          echo 'PACK_BUILDER_RELEASE_LOT_OBJECTS: PASS'

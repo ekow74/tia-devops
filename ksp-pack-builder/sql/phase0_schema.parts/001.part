@@ -1,0 +1,138 @@
+BEGIN;
+
+CREATE TABLE source (
+  source_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  source_version TEXT NOT NULL,
+  sha256 CHAR(64) NOT NULL CHECK (sha256 ~ '^[0-9A-Fa-f]{64}$'),
+  authority_role TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE source_rights (
+  source_id TEXT NOT NULL REFERENCES source(source_id),
+  component_key TEXT NOT NULL DEFAULT '__SOURCE_DEFAULT__',
+  rights_class TEXT NOT NULL CHECK (rights_class IN (
+    'PUBLIC_DOMAIN_VERIFIED','CC_BY_COMMERCIAL','LICENSED_COMMERCIAL','FACTS_ONLY',
+    'RESEARCH_ONLY','NO_AI','PROHIBITED','UNKNOWN'
+  )),
+  may_store_raw BOOLEAN NOT NULL,
+  may_llm_ingest BOOLEAN NOT NULL,
+  may_embed BOOLEAN NOT NULL,
+  may_extract_facts BOOLEAN NOT NULL,
+  may_generate_derivatives BOOLEAN NOT NULL,
+  may_display_expression BOOLEAN NOT NULL,
+  may_use_commercially BOOLEAN NOT NULL,
+  license_evidence_locator TEXT,
+  reviewed_by TEXT,
+  reviewed_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (source_id, component_key),
+  CHECK (
+    rights_class NOT IN ('UNKNOWN','PROHIBITED') OR
+    (NOT may_store_raw AND NOT may_llm_ingest AND NOT may_embed AND NOT may_extract_facts AND
+     NOT may_generate_derivatives AND NOT may_display_expression AND NOT may_use_commercially)
+  ),
+  CHECK (
+    rights_class <> 'NO_AI' OR
+    (NOT may_llm_ingest AND NOT may_embed AND NOT may_generate_derivatives AND
+     NOT may_display_expression AND NOT may_use_commercially)
+  ),
+  CHECK (
+    rights_class <> 'FACTS_ONLY' OR
+    (NOT may_store_raw AND NOT may_llm_ingest AND NOT may_embed AND may_extract_facts AND
+     NOT may_generate_derivatives AND NOT may_display_expression AND NOT may_use_commercially)
+  ),
+  CHECK (
+    rights_class <> 'RESEARCH_ONLY' OR
+    (NOT may_display_expression AND NOT may_use_commercially)
+  )
+);
+
+CREATE TABLE guideline_registry (
+  registry_id TEXT PRIMARY KEY CHECK (registry_id ~ '^guideline:[a-z0-9._-]+$'),
+  clinical_topic TEXT NOT NULL,
+  jurisdiction_default TEXT NOT NULL DEFAULT 'US',
+  source_id TEXT NOT NULL REFERENCES source(source_id),
+  source_title TEXT NOT NULL,
+  issuing_body TEXT NOT NULL,
+  source_version TEXT NOT NULL,
+  publication_date DATE NOT NULL,
+  effective_date DATE NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('PRIMARY','FOCUSED_UPDATE','SUPERSEDING_PATHWAY','SECONDARY_GAP_SOURCE','RETIRED')),
+  claim_types_authorized JSONB NOT NULL CHECK (jsonb_typeof(claim_types_authorized)='array' AND jsonb_array_length(claim_types_authorized)>0),
+  rights_mode TEXT NOT NULL CHECK (rights_mode IN ('MACHINE_OK','HUMAN_ONLY_FACT_ABSTRACTION','REFERENCE_ONLY')),
+  supersedes_registry_ids JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(supersedes_registry_ids)='array'),
+  superseded_sections JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(superseded_sections)='array'),
+  currentness_check_interval_days INT NOT NULL CHECK (currentness_check_interval_days BETWEEN 1 AND 365),
+  last_currentness_check DATE NOT NULL,
+  next_currentness_check DATE NOT NULL,
+  clinical_content_owner_review TEXT,
+  notes TEXT,
+  CHECK (
+    status NOT IN ('FOCUSED_UPDATE','SUPERSEDING_PATHWAY') OR
+    (jsonb_array_length(supersedes_registry_ids)>0 AND jsonb_array_length(superseded_sections)>0)
+  ),
+  CHECK (status='RETIRED' OR NULLIF(btrim(clinical_content_owner_review),'') IS NOT NULL)
+);
+
+CREATE TABLE evidence_unit (
+  evidence_id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  component_key TEXT NOT NULL DEFAULT '__SOURCE_DEFAULT__',
+  locator TEXT NOT NULL,
+  span_sha256 CHAR(64) NOT NULL CHECK (span_sha256 ~ '^[0-9A-Fa-f]{64}$'),
+  text_value TEXT,
+  rights_text_visible BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY (source_id, component_key) REFERENCES source_rights(source_id, component_key)
+);
+
+-- Concurrency invariant: evidence ingestion takes a shared lock on the exact
+-- rights row. A concurrent rights-tightening UPDATE therefore cannot commit a
+-- state that is incompatible with newly inserted evidence, and vice versa.
+CREATE FUNCTION enforce_evidence_rights() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE r source_rights%ROWTYPE;
+BEGIN
+  SELECT * INTO r
+  FROM source_rights
+  WHERE source_id=NEW.source_id AND component_key=NEW.component_key
+  FOR SHARE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'evidence requires source_rights row';
+  END IF;
+  IF NEW.text_value IS NOT NULL AND NOT r.may_store_raw THEN
+    RAISE EXCEPTION 'raw text storage not permitted by rights row';
+  END IF;
+  IF NEW.rights_text_visible AND NOT r.may_display_expression THEN
+    RAISE EXCEPTION 'expression display not permitted by rights row';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER trg_evidence_rights BEFORE INSERT OR UPDATE ON evidence_unit
+FOR EACH ROW EXECUTE FUNCTION enforce_evidence_rights();
+
+-- source_rights UPDATE already owns an exclusive row lock. This trigger checks
+-- dependent evidence while the evidence insert path must obtain FOR SHARE on
+-- the same row, eliminating the READ COMMITTED write-skew identified in review.
+CREATE FUNCTION prevent_incompatible_rights_tightening() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.may_store_raw AND NOT NEW.may_store_raw AND EXISTS (
+    SELECT 1 FROM evidence_unit e
+    WHERE e.source_id=OLD.source_id AND e.component_key=OLD.component_key
+      AND e.text_value IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'cannot revoke raw-storage rights while raw evidence remains; purge/reclassify first';
+  END IF;
+  IF OLD.may_display_expression AND NOT NEW.may_display_expression AND EXISTS (
+    SELECT 1 FROM evidence_unit e
+    WHERE e.source_id=OLD.source_id AND e.component_key=OLD.component_key
+      AND e.rights_text_visible
+  ) THEN
+    RAISE EXCEPTION 'cannot revoke expression-display rights while displayable evidence remains; purge/reclassify first';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER trg_rights_tightening_guard BEFORE UPDATE ON source_rights
+FOR EACH ROW EXECUTE FUNCTION prevent_incompatible_rights_tightening();
+
+CRE

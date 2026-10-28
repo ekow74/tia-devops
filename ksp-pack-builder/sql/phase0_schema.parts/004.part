@@ -1,0 +1,59 @@
+EXT NOT NULL,
+  content_hash CHAR(64) NOT NULL CHECK (content_hash ~ '^[0-9A-Fa-f]{64}$'),
+  PRIMARY KEY (lot_id, claim_revision_id),
+  FOREIGN KEY (claim_revision_id, content_hash)
+    REFERENCES claim_revision(claim_revision_id, content_hash)
+);
+
+CREATE TABLE artifact (
+  artifact_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  body JSONB NOT NULL,
+  content_hash CHAR(64) NOT NULL CHECK (content_hash ~ '^[0-9A-Fa-f]{64}$'),
+  status TEXT NOT NULL,
+  release_lot TEXT REFERENCES release_lot(lot_id)
+);
+
+CREATE TABLE artifact_claim (
+  artifact_id TEXT NOT NULL REFERENCES artifact(artifact_id),
+  claim_revision_id TEXT NOT NULL REFERENCES claim_revision(claim_revision_id),
+  claim_content_hash CHAR(64) NOT NULL CHECK (claim_content_hash ~ '^[0-9A-Fa-f]{64}$'),
+  dependency_role TEXT NOT NULL,
+  PRIMARY KEY (artifact_id, claim_revision_id, dependency_role),
+  FOREIGN KEY (claim_revision_id, claim_content_hash)
+    REFERENCES claim_revision(claim_revision_id, content_hash)
+);
+
+CREATE TABLE job (
+  job_id BIGSERIAL PRIMARY KEY,
+  stage TEXT NOT NULL,
+  input_hash TEXT NOT NULL,
+  output_hash TEXT,
+  status TEXT NOT NULL,
+  attempts INT NOT NULL DEFAULT 0 CHECK (attempts>=0),
+  usd NUMERIC(12,6) NOT NULL DEFAULT 0 CHECK (usd>=0),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ
+);
+
+CREATE TABLE eval_run (
+  eval_id BIGSERIAL PRIMARY KEY,
+  suite TEXT NOT NULL,
+  version TEXT NOT NULL,
+  pass_count INT NOT NULL DEFAULT 0 CHECK (pass_count>=0),
+  fail_count INT NOT NULL DEFAULT 0 CHECK (fail_count>=0),
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  run_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE recall_event (
+  recall_id BIGSERIAL PRIMARY KEY,
+  claim_id TEXT NOT NULL REFERENCES claim(claim_id),
+  claim_revision_id TEXT REFERENCES claim_revision(claim_revision_id),
+  content_hash CHAR(64) CHECK (content_hash IS NULL OR content_hash ~ '^[0-9A-Fa-f]{64}$'),
+  reason TEXT NOT NULL,
+  initiated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ,
+  FOREIGN KEY (claim_revision_id, claim_id, content_hash)
+    REFERENCES claim_revision(claim_revision_id, claim_id, content_hash)
+);
