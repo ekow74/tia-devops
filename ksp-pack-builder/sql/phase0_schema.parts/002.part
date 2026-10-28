@@ -1,0 +1,98 @@
+ATE TABLE concept (
+  concept_id TEXT PRIMARY KEY,
+  domain TEXT NOT NULL CHECK (domain IN ('PHARM','MEDSURG','BRIDGE')),
+  parent_concept_id TEXT REFERENCES concept(concept_id),
+  canonical_label TEXT NOT NULL,
+  status TEXT NOT NULL
+);
+
+-- Stable logical claim identity. Clinical truth lives only in append-oriented
+-- claim_revision rows so a reviewed revision can remain immutable forever.
+CREATE TABLE claim (
+  claim_id TEXT PRIMARY KEY CHECK (claim_id ~ '^(pharm|medsurg|bridge):claim:[A-Za-z0-9._-]+$'),
+  domain TEXT NOT NULL CHECK (domain IN ('PHARM','MEDSURG','BRIDGE')),
+  concept_id TEXT REFERENCES concept(concept_id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK ((domain='PHARM' AND claim_id LIKE 'pharm:claim:%') OR
+         (domain='MEDSURG' AND claim_id LIKE 'medsurg:claim:%') OR
+         (domain='BRIDGE' AND claim_id LIKE 'bridge:claim:%'))
+);
+
+CREATE TABLE claim_revision (
+  claim_revision_id TEXT PRIMARY KEY CHECK (claim_revision_id ~ '^(pharm|medsurg|bridge):claimrev:[A-Za-z0-9._-]+$'),
+  claim_id TEXT NOT NULL REFERENCES claim(claim_id),
+  revision_number INT NOT NULL CHECK (revision_number >= 1),
+  claim_type TEXT NOT NULL CHECK (claim_type IN (
+    'DRUG_IDENTITY','MECHANISM','INDICATION','CONTRAINDICATION','DOSE_RULE','ROUTE_RULE',
+    'ADMINISTRATION_RULE','HOLD_PARAMETER','ANTIDOTE_REVERSAL','THERAPEUTIC_LEVEL','MAJOR_INTERACTION',
+    'BOXED_WARNING','RENAL_HEPATIC_ADJUSTMENT','TIMING_WASHOUT_RULE','GUIDELINE_FACT','STANDARD_OF_CARE',
+    'PATHOPHYSIOLOGY','NURSING_PRIORITY','CLINICAL_JUDGMENT_RULE','ESCALATION_CRITERION','PATIENT_TEACHING',
+    'MONITORING_RULE','ADVERSE_EFFECT'
+  )),
+  claim_text TEXT NOT NULL,
+  context_frame JSONB NOT NULL,
+  verification_mode TEXT NOT NULL CHECK (verification_mode IN ('MACHINE_ENTAILED','HUMAN_DUAL','HUMAN_RN_AUTHORED_RULE')),
+  safety_class TEXT NOT NULL CHECK (safety_class IN ('ROUTINE','HIGH_RISK','SAFETY_CRITICAL')),
+  authority_type TEXT NOT NULL,
+  guideline_registry_id TEXT REFERENCES guideline_registry(registry_id),
+  effective_date DATE,
+  content_hash CHAR(64) NOT NULL CHECK (content_hash ~ '^[0-9A-Fa-f]{64}$'),
+  status TEXT NOT NULL CHECK (status IN ('CANDIDATE','SUPPORTED','CONFLICT_REVIEW','BLOCKED_EVIDENCE','BLOCKED_RIGHTS','BLOCKED_REVIEW','APPROVED','STALE','RECALLED')),
+  recalled BOOLEAN NOT NULL DEFAULT false,
+  was_approved BOOLEAN NOT NULL DEFAULT false,
+  supersedes_revision_id TEXT REFERENCES claim_revision(claim_revision_id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (claim_id, revision_number),
+  UNIQUE (claim_revision_id, claim_id, content_hash),
+  UNIQUE (claim_revision_id, content_hash),
+  CHECK (verification_mode <> 'HUMAN_DUAL' OR safety_class='SAFETY_CRITICAL'),
+  CHECK (claim_type NOT IN ('DOSE_RULE','ROUTE_RULE','ADMINISTRATION_RULE','HOLD_PARAMETER','ANTIDOTE_REVERSAL','THERAPEUTIC_LEVEL','MAJOR_INTERACTION','CONTRAINDICATION','BOXED_WARNING','RENAL_HEPATIC_ADJUSTMENT','TIMING_WASHOUT_RULE','GUIDELINE_FACT','NURSING_PRIORITY','CLINICAL_JUDGMENT_RULE','ESCALATION_CRITERION') OR safety_class IN ('HIGH_RISK','SAFETY_CRITICAL')),
+  CHECK (COALESCE(context_frame->>'scope','')='UNIVERSAL_DEFINITION' OR safety_class IN ('HIGH_RISK','SAFETY_CRITICAL')),
+  CHECK (claim_type NOT IN ('GUIDELINE_FACT','STANDARD_OF_CARE') OR (guideline_registry_id IS NOT NULL AND effective_date IS NOT NULL)),
+  CHECK (NOT recalled OR status='RECALLED')
+);
+
+CREATE TABLE claim_support (
+  claim_revision_id TEXT NOT NULL REFERENCES claim_revision(claim_revision_id),
+  evidence_id TEXT NOT NULL REFERENCES evidence_unit(evidence_id),
+  entailment TEXT NOT NULL,
+  verifier_model TEXT,
+  human_verdict TEXT,
+  PRIMARY KEY (claim_revision_id, evidence_id)
+);
+
+CREATE TABLE human_dual_review (
+  claim_revision_id TEXT PRIMARY KEY REFERENCES claim_revision(claim_revision_id),
+  claim_id TEXT NOT NULL,
+  content_hash CHAR(64) NOT NULL CHECK (content_hash ~ '^[0-9A-Fa-f]{64}$'),
+  abstractor_id TEXT NOT NULL CHECK (btrim(abstractor_id)<>''),
+  verifier_id TEXT NOT NULL CHECK (btrim(verifier_id)<>''),
+  abstractor_decision TEXT NOT NULL CHECK (abstractor_decision IN ('SUPPORT','REJECT','UNCERTAIN')),
+  verifier_decision TEXT NOT NULL CHECK (verifier_decision IN ('CONFIRM','REJECT','UNCERTAIN')),
+  abstractor_reviewed_at TIMESTAMPTZ NOT NULL,
+  verifier_reviewed_at TIMESTAMPTZ NOT NULL,
+  qualifier_checklist JSONB NOT NULL,
+  source_version TEXT NOT NULL,
+  source_locator TEXT NOT NULL,
+  effective_date DATE NOT NULL,
+  FOREIGN KEY (claim_revision_id, claim_id, content_hash)
+    REFERENCES claim_revision(claim_revision_id, claim_id, content_hash),
+  CHECK (abstractor_id <> verifier_id),
+  CHECK (qualifier_checklist ?& ARRAY[
+    'population','phenotype_or_stage','setting','condition_context','threshold_or_trigger',
+    'exclusion_or_exception','organ_function','timing_or_duration','therapy_status',
+    'recommendation_strength_or_class','evidence_level_if_stated','off_label_status',
+    'jurisdiction_applicability','source_version','effective_date'
+  ]),
+  CHECK (
+    COALESCE(qualifier_checklist->>'population','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qualifier_checklist->>'phenotype_or_stage','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qualifier_checklist->>'setting','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qualifier_checklist->>'condition_context','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qualifier_checklist->>'threshold_or_trigger','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qualifier_checklist->>'exclusion_or_exception','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qualifier_checklist->>'organ_function','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qualifier_checklist->>'timing_or_duration','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qualifier_checklist->>'therapy_status','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qualifier_checklist->>'recommendation_strength_or_class','') IN ('CHECKED','NOT_APPLICABLE') AND
+    COALESCE(qu

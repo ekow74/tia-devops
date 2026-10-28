@@ -1,0 +1,15 @@
+{
+  "gate_change_id": "GC-0007",
+  "decision_log_id": "D-0025",
+  "reason": "Add the focused Pack Builder ReleaseLot S02 state, identity, RecallEvent, TRUNCATE, and concurrency controls and register their source package as review-required.",
+  "reviewer_kind": "CLAUDE",
+  "review_status": "PENDING_EXTERNAL_BASE_LEDGER",
+  "review_reference": "KSP_Pack_Builder_ReleaseLot_Claude_Review_v1.1_and_Handoff_v1.0",
+  "approval_threshold": "M1 complete explicit 25-pair state machine and immutable non-candidate identity; M2 recall-safe pin/freeze plus both lock orderings; m1 TRUNCATE protection; m2 deterministic observed lock waits; m3 freeze-time semantics; m4 exact raw-byte hashes; PostgreSQL 18 canonical DDL qualification and independent final-head review",
+  "scope": [
+    "ksp-pack-builder/**",
+    ".github/workflows/pack-builder-release-lot-db.yml",
+    "ksp-bootstrap/policies/protected-paths.txt"
+  ],
+  "note": "This is a pending GateChange proposal, not an approval receipt or independent verification. No approval file is added or modified. Trusted-base GateChange approval and independent Claude review of the final exact head remain required; the PR must remain draft."
+}

@@ -1,0 +1,53 @@
+KSP Pack Builder ReleaseLot S02
+Review status: REVISE AND RESUBMIT; implementation evidence only, not independent approval.
+
+INTEGRATION PROVENANCE
+Base SHA: 9615dce2054d033c0c84c9d056d78674046ed7f7 (main; refreshed before work and unchanged).
+Source SHA: cb40125e60d2a5d0f8d9ee4b371eca5b02fdf6a5 (PR #4 source).
+Imported only ksp-pack-builder/** and .github/workflows/pack-builder-release-lot-db.yml from that source.
+The canonical package's schema parts define source, claim, release_lot, recall_event, and referenced tables in this repository; no PR #3 schema dependency was found.
+This branch is based directly on main. PR #3 and the old stacked PR #4 were not merged, retargeted, rebased, closed, or imported wholesale.
+
+FINDING-TO-CHANGE/TEST MATRIX
+M1 explicit transition graph and immutable identity:
+  Change: CANDIDATE -> FROZEN|QUARANTINED|RECALLED; FROZEN -> RELEASED|QUARANTINED|RECALLED; RELEASED -> QUARANTINED|RECALLED. QUARANTINED and RECALLED are terminal; same-state updates are no-ops.
+  Intentional quarantine/recall exits remain for candidate, frozen, and released lots.
+  Change: every non-candidate UPDATE rejects lot_id, bundle_sha256, frozen_at, or registry_snapshot_at changes with exact message "non-candidate release lot identity is immutable".
+  Test: tests/release_lot_additional_regression.sql exercises every one of the 25 status pairs and all four identity fields on FROZEN and RELEASED lots. Existing specific frozen rollback/direct release messages are asserted exactly with SQLSTATE P0001; RELEASED rollback edges have exact assertions.
+
+M2 recall eligibility and recall/freeze serialization:
+  Change: pinning locks the exact claim_revision FOR SHARE before looking for a matching RecallEvent. Freeze/release locks all pinned revisions FOR SHARE in claim_revision_id order and checks matching RecallEvents; matching uses claim_id plus NULL-or-equal revision id and content hash.
+  Change: RecallEvent insertion locks matching revisions FOR NO KEY UPDATE in stable claim_revision_id order before quarantine scanning. This conflicts with FOR SHARE. All release_lot, membership, claim status/recall, and RecallEvent mutations acquire the same transaction advisory gate before tuple locks, avoiding the release_lot/revision lock-order inversion. Operations fail closed outside READ COMMITTED so an old repeatable-read snapshot cannot approve after waiting.
+  Tests: RL-REC-1 exact and claim-wide recalled pin attempts; RL-REC-2 recall after pinning blocks freeze while status remains APPROVED. tests/run_release_lot_concurrency.sh proves blocker/waiter relationships via pg_blocking_pids and pg_locks for approval withdrawal first/freeze first (RL-CONC-A/B), both RecallEvent/freeze orderings (RL-CONC-C/D), and an actual revision FOR SHARE blocker against the RecallEvent FOR NO KEY UPDATE lock (RL-CONC-E). Tests assert SQLSTATE P0001 and exact error messages.
+
+m1 TRUNCATE bypass:
+  Change: BEFORE TRUNCATE statement guards on release_lot and release_lot_claim.
+  Test: both direct membership truncation and release_lot CASCADE truncation are rejected with exact P0001 message.
+
+m2 deterministic synchronization:
+  Change: concurrency runner coordinates through named pipes, bounded polling, application_name, pg_stat_activity, pg_locks, and pg_blocking_pids; it does not use sleeps to establish race order.
+  Test: RL-CONC-A through RL-CONC-E require observation of the expected blocker before release and fail with diagnostic lock/activity output on timeout.
+
+m3 frozen_at:
+  Change: candidate lots start with NULL frozen_at; CANDIDATE -> FROZEN assigns clock_timestamp(). Candidate writes and non-candidate changes are rejected.
+  Test: positive freeze timestamp bounds, attempted candidate timestamp assignment, non-candidate insertion, and frozen/released timestamp identity mutation.
+
+m4 exact hashes:
+  Artifact: review/SHA256SUMS.txt lists raw-byte SHA-256 values for every submitted changed source, test, workflow, governance, and review-matrix file; the manifest's own SHA-256 is reported separately in the PR evidence.
+
+CANONICAL QUALIFICATION
+Canonical DDL is reconstructed by tests/run_postgres_ddl.sh from sql/phase0_schema.parts/*.part and sql/release_lot_controls.sql; the loader and workflow pin the exact concatenated raw-byte SHA-256. It is loaded in PostgreSQL 18, not the minimal fixture.
+Server: PostgreSQL 18.6.
+Commands:
+  bash ksp-pack-builder/tests/run_postgres_ddl.sh
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -f ksp-pack-builder/tests/release_lot_regression.sql
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -f ksp-pack-builder/tests/release_lot_additional_regression.sql
+  bash ksp-pack-builder/tests/run_release_lot_isolation.sh
+  bash ksp-pack-builder/tests/run_release_lot_concurrency.sh
+Local disposable PostgreSQL 18 qualification: PASS for all commands above. Canonical schema SHA-256: b9c596a900df6ff3b29e1675cfc2fca321a8d1a4867063a89888a12ee3893fac.
+CI run URL and exact final head SHA are recorded in the PR check and completion report after this evidence commit is pushed.
+
+GOVERNANCE AND REMAINING RISKS
+GC-0007 is a pending GateChange proposal for this package, workflow, and trusted protected-path registry coverage. No decision or approval receipt is minted or modified. The trusted-base checker is expected to block until an external base-branch approval binds the GateChange and final head; that block is not bypassed.
+The PR remains draft pending independent Claude review of the exact final head. Ekow retains merge authority. No PR #3 integration, deployment, Terraform apply, real-lot freeze, or merge occurred.
+The advisory gate intentionally serializes all release-lot membership/state mutations, matching claim-revision status/recall updates, and RecallEvent inserts. This is conservative and may reduce throughput; any future narrowing requires an independently reviewed lock-order proof and concurrency qualification.

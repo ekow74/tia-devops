@@ -40,3 +40,4 @@ ksp-bootstrap/policies/**
 ksp-bootstrap/requirements-ci.txt
 ksp-bootstrap/scripts/ci/**
 ksp-bootstrap/tests/**
+ksp-pack-builder/**
