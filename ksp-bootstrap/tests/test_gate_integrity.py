@@ -191,7 +191,13 @@ class GateIntegrityTests(unittest.TestCase):
             git(repo, "config", "user.email", "test@example.invalid")
             git(repo, "config", "user.name", "KSP Test")
             (repo / ".keep").write_text("anchor\n")
+            workflows = repo / ".github/workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "safe.yml").write_text(
+                "name: safe\non: push\npermissions:\n  contents: read\njobs: {}\n"
+            )
             git(repo, "add", ".keep")
+            git(repo, "add", ".github/workflows/safe.yml")
             git(repo, "commit", "-q", "-m", "anchor")
             anchor = git(repo, "rev-parse", "HEAD")
 

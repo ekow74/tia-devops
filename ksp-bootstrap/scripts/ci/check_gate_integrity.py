@@ -11,9 +11,19 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
 POLICY_PATH = "ksp-bootstrap/policies/protected-paths.txt"
 GATE_DIR = "ksp-bootstrap/governance/gate-changes"
 APPROVAL_DIR = "ksp-bootstrap/governance/approvals"
+WORKFLOW_DIR = ".github/workflows"
+WRITE_PERMISSION_EXCEPTIONS = {
+    ".github/workflows/ksp-gate-authority.yml",
+    ".github/workflows/ksp-independent-review.yml",
+}
 
 SUSPICIOUS_ADDITIONS = (
     "pytest.mark.skip",
@@ -63,6 +73,112 @@ def path_matches(path: str, pattern: str) -> bool:
 
 def protected(path: str, policy_ref: str | None = None) -> bool:
     return any(path_matches(path, p) for p in patterns(policy_ref))
+
+
+def _written_permissions(permissions: Any, source: str) -> set[str]:
+    guarded = {"checks", "statuses", "pull-requests", "contents"}
+    if permissions is None or permissions == "read-all":
+        return set()
+    if permissions == "write-all":
+        return guarded
+    if not isinstance(permissions, dict):
+        raise ValueError(f"{source}: permissions must be a mapping, read-all, or write-all")
+    written: set[str] = set()
+    for permission in guarded:
+        value = permissions.get(permission)
+        if value == "write":
+            written.add(permission)
+        elif value not in (None, "none", "read"):
+            raise ValueError(f"{source}: invalid {permission} permission value")
+    return written
+
+
+def validate_workflow_permissions(workflows_dir: Path | None = None) -> list[str]:
+    """Parse trusted-base workflow YAML and enforce explicit PR permissions."""
+    directory = workflows_dir or ROOT / WORKFLOW_DIR
+    errors: list[str] = []
+    if yaml is None:
+        return ["PyYAML is required for workflow permission validation"]
+    if not directory.is_dir():
+        return [f"workflow directory is missing: {directory}"]
+
+    for path in sorted(
+        p for p in directory.iterdir()
+        if p.is_file() and p.suffix.lower() in {".yml", ".yaml"}
+    ):
+        relative = path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else path.as_posix()
+        try:
+            document = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+        except (OSError, yaml.YAMLError) as exc:
+            errors.append(f"workflow YAML parse failed: {relative}: {exc}")
+            continue
+        if not isinstance(document, dict):
+            errors.append(f"workflow YAML root must be a mapping: {relative}")
+            continue
+
+        trigger = document.get("on")
+        trigger_names: set[str] = set()
+        if isinstance(trigger, str):
+            trigger_names.add(trigger)
+        elif isinstance(trigger, list):
+            trigger_names.update(item for item in trigger if isinstance(item, str))
+        elif isinstance(trigger, dict):
+            trigger_names.update(str(item) for item in trigger)
+        elif trigger is not None:
+            errors.append(f"workflow trigger must be a string, sequence, or mapping: {relative}")
+        is_pr_workflow = (
+            bool(trigger_names & {"pull_request", "pull_request_target"})
+        )
+        executes_pr_head = "pull_request" in trigger_names
+        workflow_permissions = document.get("permissions")
+        jobs = document.get("jobs", {})
+        if not isinstance(jobs, dict):
+            errors.append(f"workflow jobs must be a mapping: {relative}")
+            continue
+        if is_pr_workflow and (
+            not jobs
+            or (
+                workflow_permissions is None
+                and any(
+                    not isinstance(job, dict) or job.get("permissions") is None
+                    for job in jobs.values()
+                )
+            )
+        ):
+            errors.append(f"PR workflow must explicitly set effective permissions: {relative}")
+
+        scopes: list[tuple[str, Any]] = []
+        if workflow_permissions is not None:
+            scopes.append((f"{relative} workflow", workflow_permissions))
+        for job_name, job in jobs.items():
+            if isinstance(job, dict) and job.get("permissions") is not None:
+                scopes.append((f"{relative} job {job_name}", job["permissions"]))
+        for source, permissions in scopes:
+            try:
+                written = _written_permissions(permissions, source)
+            except ValueError as exc:
+                errors.append(str(exc))
+                continue
+            if (
+                written & {"checks", "statuses"}
+                and relative not in WRITE_PERMISSION_EXCEPTIONS
+            ):
+                errors.append(
+                    f"{source}: checks/statuses write permission is not allowed"
+                )
+            if (
+                relative in WRITE_PERMISSION_EXCEPTIONS
+                and written & {"contents", "pull-requests"}
+            ):
+                errors.append(
+                    f"{source}: trusted workflow exception may not grant contents/pull-requests write"
+                )
+            if executes_pr_head and written:
+                errors.append(
+                    f"{source}: PR-head workflow cannot grant write permission for "
+                    f"{', '.join(sorted(written))}"
+                )
+    return errors
 
 
 def changed_files(base: str, head: str) -> list[tuple[str, str]]:
@@ -283,6 +399,13 @@ def main() -> int:
     if ns.bootstrap_anchor and not bootstrap_base_is_receipts_only(ns.bootstrap_anchor, ns.base):
         print("gate-integrity: FAIL")
         print(" - bootstrap base is not the pinned anchor plus approval-ledger receipts only")
+        return 1
+
+    workflow_errors = validate_workflow_permissions()
+    if workflow_errors:
+        print("gate-integrity: FAIL")
+        for error in workflow_errors:
+            print(f" - {error}")
         return 1
 
     try:

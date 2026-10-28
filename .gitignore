@@ -21,6 +21,7 @@ backend/.idea/*
 devops-easy-learning-private
 test
 
+__pycache__/
 
 # Local .terraform directories
 **/.terraform/*
@@ -28,4 +29,3 @@ test
 # .tfstate files
 *.tfstate
 *.tfstate.*
-

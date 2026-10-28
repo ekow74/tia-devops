@@ -1,0 +1,114 @@
+name: KSP Independent Review
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] base-trusted reviewer; PR head is data only
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ksp-independent-review-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  independent-review:
+    name: KSP Independent Review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      KSP_REPOSITORY: ${{ github.repository }}
+      KSP_PR_NUMBER: ${{ github.event.pull_request.number }}
+      KSP_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      KSP_BASE_REF: ${{ github.event.pull_request.base.ref }}
+      KSP_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      KSP_RUN_ID: ${{ github.run_id }}
+      KSP_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Require default-branch target before checkout
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ "${BASE_REF}" != "${DEFAULT_BRANCH}" ]]; then
+            echo "KSP Independent Review: PR base is not the default branch" >&2
+            exit 1
+          fi
+
+      - name: Checkout trusted base only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve trusted base SHA
+        id: trusted-base
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Classify complete PR file list using trusted registry
+        id: classify
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          KSP_BASE_SHA: ${{ steps.trusted-base.outputs.sha }}
+        run: |
+          python3 -I ksp-bootstrap/scripts/ci/ksp_independent_review.py classify \
+            --repository "${KSP_REPOSITORY}" \
+            --pr-number "${KSP_PR_NUMBER}" \
+            --head-sha "${KSP_HEAD_SHA}" \
+            --base-sha "${KSP_BASE_SHA}" \
+            --base-ref "${KSP_BASE_REF}" \
+            --default-branch "${KSP_DEFAULT_BRANCH}" \
+            --run-id "${KSP_RUN_ID}" \
+            --run-url "${KSP_RUN_URL}"
+
+      - name: Prepare review input as untrusted data
+        if: steps.classify.outputs.classification == 'review_required'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REVIEW_INPUT: ${{ runner.temp }}/ksp-review-input.json
+          KSP_BASE_SHA: ${{ steps.trusted-base.outputs.sha }}
+        run: |
+          python3 -I ksp-bootstrap/scripts/ci/ksp_independent_review.py prepare \
+            --repository "${KSP_REPOSITORY}" \
+            --pr-number "${KSP_PR_NUMBER}" \
+            --head-sha "${KSP_HEAD_SHA}" \
+            --base-sha "${KSP_BASE_SHA}" \
+            --output "${REVIEW_INPUT}"
+
+      - name: Call independent reviewer (tool-free adapter)
+        if: steps.classify.outputs.classification == 'review_required'
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REVIEW_INPUT: ${{ runner.temp }}/ksp-review-input.json
+          KSP_BASE_SHA: ${{ steps.trusted-base.outputs.sha }}
+        run: |
+          python3 -I ksp-bootstrap/scripts/ci/ksp_independent_review.py review \
+            --adapter anthropic \
+            --input "${REVIEW_INPUT}" \
+            --repository "${KSP_REPOSITORY}" \
+            --pr-number "${KSP_PR_NUMBER}" \
+            --head-sha "${KSP_HEAD_SHA}" \
+            --base-sha "${KSP_BASE_SHA}" \
+            --run-id "${KSP_RUN_ID}" \
+            --run-url "${KSP_RUN_URL}"
+
+      - name: Reject stale head evidence
+        if: steps.classify.outputs.classification == 'review_required'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -I ksp-bootstrap/scripts/ci/ksp_independent_review.py verify-head \
+            --repository "${KSP_REPOSITORY}" \
+            --pr-number "${KSP_PR_NUMBER}" \
+            --head-sha "${KSP_HEAD_SHA}"
