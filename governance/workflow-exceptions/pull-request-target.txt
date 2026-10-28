@@ -3,3 +3,5 @@
 # Entries are GateChange-controlled exact exceptions, never patterns.
 .github/workflows/ksp-gate-authority.yml pull_request_target
 .github/workflows/ksp-gate-authority.yml zizmor:dangerous-triggers
+.github/workflows/ksp-independent-review.yml pull_request_target
+.github/workflows/ksp-independent-review.yml zizmor:dangerous-triggers

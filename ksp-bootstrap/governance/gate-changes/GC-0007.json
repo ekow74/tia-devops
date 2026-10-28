@@ -1,0 +1,27 @@
+{
+  "gate_change_id": "GC-0007",
+  "decision_log_id": "D-0023",
+  "reason": "Implement the approved Phase-0 KSP independent-review gate with trusted-base classification, fail-closed reviewer isolation, workflow permission controls, and Q0-Q5 qualification evidence.",
+  "reviewer_kind": "CLAUDE",
+  "review_status": "PENDING_EXTERNAL_BASE_LEDGER",
+  "review_reference": "KSP_GitHub_Copilot_Claude_Drive_REVIEW_v2.0_2026-10-27",
+  "approval_threshold": "N1 structural Checks/Statuses permission denial; N2 one-step credential and tool-free adapter isolation; N3 prompt-injection and schema/error fail-closed controls; N4 trusted-base complete-file classification and stale-head invalidation; N5 Q0-Q5 and post-promotion qualification evidence",
+  "scope": [
+    ".gitignore",
+    ".github/workflows/ksp-gate-authority.yml",
+    ".github/workflows/ksp-independent-review.yml",
+    "governance/workflow-exceptions/pull-request-target.txt",
+    "ksp-bootstrap/governance/gate-changes/GC-0007.json",
+    "ksp-bootstrap/governance/qualification/phase0-independent-review.md",
+    "ksp-bootstrap/policies/protected-paths.txt",
+    "ksp-bootstrap/scripts/ci/check_gate_integrity.py",
+    "ksp-bootstrap/scripts/ci/ksp_independent_review.py",
+    "ksp-bootstrap/tests/fixtures/review_gate/prompt_injection.txt",
+    "ksp-bootstrap/tests/fixtures/review_gate/readonly_token_forge.py",
+    "ksp-bootstrap/tests/test_gate_authority.py",
+    "ksp-bootstrap/tests/test_gate_integrity.py",
+    "ksp-bootstrap/tests/test_gc0005_hardening.py",
+    "ksp-bootstrap/tests/test_gc0007_independent_review.py"
+  ],
+  "note": "The PR cannot authorize itself. External Claude review must bind this GateChange, ordered scope, threshold, review reference, and final exact head SHA; the approval receipt may be added only to the trusted base ledger after review. This record neither promotes the required check nor authorizes Owner settings changes, a live provider credential, spend, or merge."
+}

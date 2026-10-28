@@ -181,6 +181,11 @@ class GC0005HardeningTests(unittest.TestCase):
                     ".github/workflows/ksp-gate-authority.yml",
                     "zizmor:dangerous-triggers",
                 ),
+                (".github/workflows/ksp-independent-review.yml", "pull_request_target"),
+                (
+                    ".github/workflows/ksp-independent-review.yml",
+                    "zizmor:dangerous-triggers",
+                ),
             },
         )
         self.assertEqual(
@@ -199,6 +204,11 @@ class GC0005HardeningTests(unittest.TestCase):
             git(repo, "config", "user.email", "test@example.invalid")
             git(repo, "config", "user.name", "KSP Test")
 
+            workflows = repo / ".github/workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "safe.yml").write_text(
+                "name: safe\non: push\npermissions:\n  contents: read\njobs: {}\n"
+            )
             (repo / "tests").mkdir()
             (repo / "tests/test_safety.py").write_text("protected\n")
             policy = repo / "ksp-bootstrap/policies/protected-paths.txt"

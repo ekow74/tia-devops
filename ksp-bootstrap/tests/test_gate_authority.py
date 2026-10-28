@@ -76,6 +76,8 @@ class GateAuthorityHardeningTests(unittest.TestCase):
             [
                 ".github/workflows/ksp-gate-authority.yml pull_request_target",
                 ".github/workflows/ksp-gate-authority.yml zizmor:dangerous-triggers",
+                ".github/workflows/ksp-independent-review.yml pull_request_target",
+                ".github/workflows/ksp-independent-review.yml zizmor:dangerous-triggers",
             ],
         )
         validator = UMBRELLA_VALIDATOR.read_text()

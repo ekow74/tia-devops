@@ -35,6 +35,7 @@ src/ksp_knowledge/platform.py
 tests/**
 tests/fixtures/**
 # Bootstrap/reference implementation surfaces
+.gitignore
 ksp-bootstrap/governance/**
 ksp-bootstrap/policies/**
 ksp-bootstrap/requirements-ci.txt
