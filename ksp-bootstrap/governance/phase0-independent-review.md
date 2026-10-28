@@ -33,10 +33,15 @@ settings/ruleset change is authorized by this draft.
   passed to no model. Provider integration remains unqualified until an owner
   authorizes a provider, its bounded transport, and credential handling.
 - The base-trusted Gate Authority reads its authority policy from base and
-  checks workflow permissions in the PR-head Git tree. Checks/statuses writes
-  outside the exact reviewed authority/reviewer workflow paths fail; any such
-  write on a `pull_request` workflow fails even within an allowed path. The
-  reviewed paths currently request no writes.
+  safely decodes workflow YAML in the PR-head Git tree using the existing
+  hash-pinned PyYAML dependency. It validates workflow-level and every
+  job-level permission map, including inherited permissions, flow mappings,
+  aliases, merges, and `write-all`. A missing explicit workflow permission
+  declaration fails closed because repository defaults are not assumed.
+  Checks/statuses writes outside exact reviewed authority/reviewer paths fail;
+  any such write on a `pull_request` workflow fails even within an allowed
+  path. The trusted authority workflow installs the pinned parser before
+  invoking its base checker. The reviewed paths currently request no writes.
 
 The `artifact_reference` is a link to the immutable workflow run record and its
 job summary, not an approval receipt or downloadable provider artifact.

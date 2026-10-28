@@ -11,6 +11,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
 POLICY_PATH = "ksp-bootstrap/policies/protected-paths.txt"
 AUTHORITY_POLICY_PATH = "ksp-bootstrap/policies/gate-authority.json"
 GATE_DIR = "ksp-bootstrap/governance/gate-changes"
@@ -25,36 +30,57 @@ SUSPICIOUS_ADDITIONS = (
     "|| true",
 )
 THRESHOLD_RE = re.compile(r"(?i)(threshold|minimum|min_|recall|coverage)[^0-9-]*(-?\d+(?:\.\d+)?)")
-PERMISSION_WRITE_RE = re.compile(
-    r"""(?im)(?:["']?(actions|attestations|checks|contents|deployments|discussions|id-token|issues|packages|pages|pull-requests|repository-projects|security-events|statuses)["']?\s*:\s*["']?write\b|write-all\b)"""
+PERMISSION_SCOPES = frozenset(
+    {
+        "actions",
+        "attestations",
+        "checks",
+        "contents",
+        "deployments",
+        "discussions",
+        "id-token",
+        "issues",
+        "packages",
+        "pages",
+        "pull-requests",
+        "repository-projects",
+        "security-events",
+        "statuses",
+    }
 )
-PERMISSIONS_EXPRESSION_RE = re.compile(
-    r"""(?im)^\s*["']?permissions["']?\s*:\s*(?:.*\$\{\{|[&*|>])"""
-)
-PERMISSION_INDIRECT_RE = re.compile(
-    r"""(?im)["']?(actions|attestations|checks|contents|deployments|discussions|id-token|issues|packages|pages|pull-requests|repository-projects|security-events|statuses)["']?\s*:\s*(?:[&*!|>])"""
-)
-PERMISSION_VALUE_RE = re.compile(
-    r"""(?im)^\s*["']?(actions|attestations|checks|contents|deployments|discussions|id-token|issues|packages|pages|pull-requests|repository-projects|security-events|statuses)["']?\s*:\s*(.*?)\s*$"""
-)
-YAML_ESCAPE_RE = re.compile(
-    r"\\(?:u[0-9a-f]{4}|U[0-9a-f]{8}|x[0-9a-f]{2})", re.I
-)
-YAML_ANCHOR_ALIAS_RE = re.compile(r"(?m)(?:^|[\s{,])(?:&|\*)")
-YAML_EXPLICIT_KEY_RE = re.compile(r"(?m)^\s*[?:]\s+")
-YAML_TAG_RE = re.compile(r"(?m)(?:^|[\s{,])!(?:!|<|[A-Za-z0-9])")
-YAML_FLOW_PERMISSIONS_RE = re.compile(
-    r"""(?m)^\s*["']?permissions["']?\s*:\s*[\[{]"""
-)
-YAML_LINE_CONTINUATION_RE = re.compile(r"\\\r?\n")
-YAML_QUOTED_CONTINUATION_RE = re.compile(r"(?m)^\s*['\"][^\n]*\\$")
-YAML_BLOCK_SCALAR_RE = re.compile(r"^\s*[^#\s].*:\s*[|>][1-9]?[+-]?\s*(?:#.*)?$")
-YAML_ALIAS_KEY_RE = re.compile(r"(?m)^\s*\*[^\s:]+:")
-YAML_TAGGED_KEY_RE = re.compile(r"(?m)^\s*![^\s]+\s+[^:\n]+:")
-PULL_REQUEST_RE = re.compile(r"(?<![A-Za-z0-9_])pull_request(?![A-Za-z0-9_])")
-PULL_REQUEST_TARGET_RE = re.compile(
-    r"(?<![A-Za-z0-9_])pull_request_target(?![A-Za-z0-9_])"
-)
+REVIEWED_WRITE_SCOPES = frozenset({"checks", "statuses"})
+PULL_REQUEST_EVENTS = frozenset({"pull_request"})
+PULL_REQUEST_TARGET_EVENTS = frozenset({"pull_request_target"})
+
+if yaml is not None:
+    class StrictWorkflowLoader(yaml.SafeLoader):
+        """Safe YAML loader that rejects duplicate explicit mapping keys."""
+
+        def construct_mapping(self, node, deep=False):
+            if isinstance(node, yaml.MappingNode):
+                seen = set()
+                for key_node, _ in node.value:
+                    if key_node.tag == "tag:yaml.org,2002:merge":
+                        continue
+                    key = self.construct_object(key_node, deep=deep)
+                    try:
+                        if key in seen:
+                            raise yaml.constructor.ConstructorError(
+                                "while constructing a workflow mapping",
+                                node.start_mark,
+                                f"duplicate mapping key {key!r}",
+                                key_node.start_mark,
+                            )
+                        seen.add(key)
+                    except TypeError as exc:
+                        raise yaml.constructor.ConstructorError(
+                            "while constructing a workflow mapping",
+                            node.start_mark,
+                            "unhashable mapping key",
+                            key_node.start_mark,
+                        ) from exc
+                self.flatten_mapping(node)
+            return super().construct_mapping(node, deep=deep)
 
 ROOT = Path.cwd()
 _POLICY_REF: str | None = None
@@ -106,109 +132,131 @@ def changed_files(base: str, head: str) -> list[tuple[str, str]]:
     return rows
 
 
-def _active_workflow_text(text: str) -> str:
-    return "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+def _workflow_document(path: str, text: str) -> dict[str, Any]:
+    if yaml is None:
+        raise ValueError("PyYAML is required for workflow permission validation")
+    try:
+        workflow = yaml.load(text, Loader=StrictWorkflowLoader)
+    except (yaml.YAMLError, TypeError, ValueError) as exc:
+        raise ValueError(f"{path}: workflow YAML could not be decoded safely: {exc}") from exc
+    if not isinstance(workflow, dict) or not all(
+        isinstance(key, (str, bool)) for key in workflow
+    ):
+        raise ValueError(f"{path}: workflow YAML root must be a mapping")
+    if "on" in workflow and (True in workflow or False in workflow):
+        raise ValueError(f"{path}: ambiguous workflow trigger keys")
+    return workflow
 
 
-def _permission_blocks(text: str) -> list[str]:
-    lines = text.splitlines()
-    blocks: list[str] = []
-    for index, line in enumerate(lines):
-        match = re.match(r"""^(\s*)["']?permissions["']?\s*:(.*)$""", line)
-        if not match:
-            continue
-        indent = len(match.group(1))
-        block = [line]
-        for following in lines[index + 1 :]:
-            if following.strip() and len(following) - len(following.lstrip()) <= indent:
-                break
-            block.append(following)
-        blocks.append("\n".join(block))
-    return blocks
+def _workflow_triggers(path: str, workflow: dict[str, Any]) -> set[str]:
+    trigger_key: str | bool | None = (
+        "on"
+        if "on" in workflow
+        else True
+        if True in workflow
+        else False
+        if False in workflow
+        else None
+    )
+    if trigger_key is None:
+        raise ValueError(f"{path}: workflow trigger declaration is missing")
+    declaration = workflow[trigger_key]
+    if isinstance(declaration, str):
+        triggers = {declaration}
+    elif isinstance(declaration, list) and all(
+        isinstance(item, str) for item in declaration
+    ):
+        triggers = set(declaration)
+    elif isinstance(declaration, dict) and all(
+        isinstance(item, str) for item in declaration
+    ):
+        triggers = set(declaration)
+    else:
+        raise ValueError(f"{path}: workflow trigger declaration is unsupported")
+    if not triggers:
+        raise ValueError(f"{path}: workflow trigger declaration is empty")
+    return triggers
 
 
-def _has_quoted_yaml_continuation(text: str) -> bool:
-    block_indent: int | None = None
-    for line in text.splitlines():
-        indent = len(line) - len(line.lstrip())
-        if block_indent is not None:
-            if not line.strip() or indent > block_indent:
-                continue
-            block_indent = None
-        if YAML_BLOCK_SCALAR_RE.match(line):
-            block_indent = indent
-        elif YAML_QUOTED_CONTINUATION_RE.match(line):
-            return True
-    return False
+def _normalize_permissions(value: Any, source: str) -> dict[str, str]:
+    if isinstance(value, str):
+        if value == "read-all":
+            return dict.fromkeys(PERMISSION_SCOPES, "read")
+        if value == "write-all":
+            return dict.fromkeys(PERMISSION_SCOPES, "write")
+        raise ValueError(f"{source}: permission shorthand must be read-all or write-all")
+    if not isinstance(value, dict):
+        raise ValueError(f"{source}: permissions must be a mapping or supported shorthand")
+    permissions: dict[str, str] = {}
+    for scope, access in value.items():
+        if not isinstance(scope, str) or scope not in PERMISSION_SCOPES:
+            raise ValueError(f"{source}: unsupported permission scope {scope!r}")
+        if not isinstance(access, str) or access not in {"read", "write", "none"}:
+            raise ValueError(f"{source}: invalid access level for {scope}")
+        permissions[scope] = access
+    return permissions
+
+
+def _validate_effective_permissions(
+    path: str,
+    source: str,
+    permissions: dict[str, str],
+    triggers: set[str],
+    policy: dict[str, Any],
+) -> None:
+    writes = {scope for scope, access in permissions.items() if access == "write"}
+    if not writes:
+        return
+    if writes & set(policy["always_read_only_permissions"]):
+        raise ValueError(f"{path}: {source} writes a policy-read-only permission")
+    if PULL_REQUEST_EVENTS & triggers:
+        raise ValueError(f"{path}: write permissions are forbidden on pull_request jobs")
+    if PULL_REQUEST_TARGET_EVENTS & triggers and writes - REVIEWED_WRITE_SCOPES:
+        raise ValueError(f"{path}: pull_request_target write permissions are not reviewed")
+    reviewed_writes = writes & REVIEWED_WRITE_SCOPES
+    if not reviewed_writes:
+        return
+    if path not in policy["reviewed_authority_paths"]:
+        raise ValueError(
+            f"{path}: {source} checks/statuses write is outside reviewed authority paths"
+        )
+    if not PULL_REQUEST_TARGET_EVENTS & triggers:
+        raise ValueError(
+            f"{path}: {source} checks/statuses write lacks pull_request_target"
+        )
 
 
 def validate_workflow_permissions(
     path: str, text: str, policy: dict[str, Any]
 ) -> None:
-    active = _active_workflow_text(text)
-    if YAML_ESCAPE_RE.search(active):
-        raise ValueError(f"{path}: escaped YAML syntax is not reviewable")
-    if _has_quoted_yaml_continuation(active):
-        raise ValueError(f"{path}: escaped YAML key continuation is not reviewable")
-    if YAML_EXPLICIT_KEY_RE.search(active):
-        raise ValueError(f"{path}: explicit YAML mapping keys are not reviewable")
-    if YAML_ALIAS_KEY_RE.search(active) or YAML_TAGGED_KEY_RE.search(active):
-        raise ValueError(f"{path}: aliased or tagged YAML mapping keys are not reviewable")
-    blocks = _permission_blocks(active)
-    if any(YAML_LINE_CONTINUATION_RE.search(block) for block in blocks):
-        raise ValueError(f"{path}: escaped YAML permission continuation is not reviewable")
-    if any(YAML_ANCHOR_ALIAS_RE.search(block) for block in blocks):
-        raise ValueError(f"{path}: YAML permission anchors and aliases are not reviewable")
-    if any(YAML_TAG_RE.search(block) for block in blocks):
-        raise ValueError(f"{path}: YAML permission tags are not reviewable")
-    if any(YAML_EXPLICIT_KEY_RE.search(block) for block in blocks):
-        raise ValueError(f"{path}: explicit YAML permission keys are not reviewable")
-    if any(YAML_FLOW_PERMISSIONS_RE.search(block) for block in blocks):
-        raise ValueError(f"{path}: flow-style permissions are not reviewable")
-    for block in blocks:
-        if PERMISSIONS_EXPRESSION_RE.search(block):
-            raise ValueError(f"{path}: noncanonical workflow permissions are not reviewable")
-        if PERMISSION_INDIRECT_RE.search(block):
-            raise ValueError(f"{path}: indirect checks/statuses permissions are not reviewable")
-        for match in PERMISSION_VALUE_RE.finditer(block):
-            value = match.group(2).strip()
-            if value not in {"read", "write", "none", '"read"', '"write"', '"none"', "'read'", "'write'", "'none'"}:
-                raise ValueError(f"{path}: noncanonical workflow permission value")
-    grants = {
-        match.group(1).lower()
-        for block in blocks
-        for match in PERMISSION_WRITE_RE.finditer(block)
-        if match.group(1)
-    }
-    if any("write-all" in block for block in blocks):
-        grants.add("write-all")
-    if not grants:
-        return
-
-    if PULL_REQUEST_RE.search(active):
-        raise ValueError(f"{path}: write permissions are forbidden on pull_request jobs")
-    if grants & {"contents", "pull-requests", "write-all"}:
-        raise ValueError(f"{path}: contents/pull-requests/write-all permissions are prohibited")
-    if PULL_REQUEST_TARGET_RE.search(active) and grants - {"checks", "statuses"}:
-        raise ValueError(f"{path}: pull_request_target write permissions are not reviewed")
-    if not grants & {"checks", "statuses"}:
-        return
-    if grants - {"checks", "statuses"}:
-        raise ValueError(f"{path}: only checks/statuses writes may be considered for review")
-
-    authorized_paths = policy.get("reviewed_authority_paths")
-    if not isinstance(authorized_paths, list) or not all(
-        isinstance(item, str) for item in authorized_paths
-    ):
-        raise ValueError("base Gate Authority policy has an invalid authority path list")
-    if path not in authorized_paths:
-        raise ValueError(f"{path}: checks/statuses write is outside reviewed authority paths")
-    if not PULL_REQUEST_TARGET_RE.search(active):
-        raise ValueError(f"{path}: write permission lacks a trusted pull_request_target trigger")
-
-    blocked = policy.get("blocked_permissions")
-    if blocked != ["checks", "statuses"]:
-        raise ValueError("base Gate Authority policy does not block checks and statuses writes")
+    workflow = _workflow_document(path, text)
+    triggers = _workflow_triggers(path, workflow)
+    if "permissions" not in workflow:
+        raise ValueError(
+            f"{path}: workflow-level permissions must be explicit; repository defaults are unverified"
+        )
+    workflow_permissions = _normalize_permissions(
+        workflow["permissions"], f"{path}: workflow permissions"
+    )
+    jobs = workflow.get("jobs")
+    if not isinstance(jobs, dict) or not jobs:
+        raise ValueError(f"{path}: jobs must be a non-empty mapping")
+    for job_id, job in jobs.items():
+        if not isinstance(job_id, str) or not isinstance(job, dict):
+            raise ValueError(f"{path}: malformed job declaration")
+        if "permissions" in job:
+            effective_permissions = _normalize_permissions(
+                job["permissions"], f"{path}: job {job_id} permissions"
+            )
+        else:
+            effective_permissions = workflow_permissions
+        _validate_effective_permissions(
+            path,
+            f"job {job_id}",
+            effective_permissions,
+            triggers,
+            policy,
+        )
 
 
 def validate_head_workflow_permissions(base: str, head: str) -> None:

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ROOT.parent
 MODULE_PATH = ROOT / "scripts/ci/phase0_review_gate.py"
 AUTHORITY = ROOT / "scripts/ci/check_gate_integrity.py"
+AUTHORITY_WORKFLOW = REPO_ROOT / ".github/workflows/ksp-gate-authority.yml"
 WORKFLOW = REPO_ROOT / ".github/workflows/phase0-review-gate.yml"
 ALLOWLIST = REPO_ROOT / "governance/workflow-exceptions/pull-request-target.txt"
 AUTHORITY_POLICY = ROOT / "policies/gate-authority.json"
@@ -194,104 +195,169 @@ class Phase0ReviewGateTests(unittest.TestCase):
             "permission-checks-write.yml",
             "permission-block-scalar.yml",
             "permission-statuses-write-head.yml",
-            "reviewer-workflow-spoof.yml",
+            "permission-alias-key.yml",
+            "permission-explicit-key.yml",
+            "permission-line-continuation.yml",
         ):
-            fixture = (FIXTURES / filename).read_text()
-            with self.subTest(filename=filename), self.assertRaisesRegex(
-                ValueError,
-                "outside reviewed authority paths|pull_request jobs|indirect checks/statuses",
-            ):
+            with self.subTest(fixture=filename), self.assertRaises(ValueError):
                 authority.validate_workflow_permissions(
-                    ".github/workflows/untrusted.yml", fixture, POLICY
+                    ".github/workflows/untrusted.yml",
+                    (FIXTURES / filename).read_text(),
+                    POLICY,
                 )
 
-        with self.assertRaisesRegex(
-            ValueError, "indirect checks/statuses|anchors and aliases"
-        ):
-            authority.validate_workflow_permissions(
-                ".github/workflows/ksp-gate-authority.yml",
-                "on:\n  pull_request_target:\npermissions:\n  checks: *grant\n",
-                POLICY,
-            )
-        with self.assertRaisesRegex(ValueError, "escaped YAML"):
-            authority.validate_workflow_permissions(
-                ".github/workflows/ksp-gate-authority.yml",
-                'permissions: {"\\u0063hecks": write}\n',
-                POLICY,
-            )
-        with self.assertRaisesRegex(ValueError, "escaped YAML"):
-            authority.validate_workflow_permissions(
-                ".github/workflows/ksp-gate-authority.yml",
-                'permissions:\n  checks: "writ\\u0065"\n',
-                POLICY,
-            )
-        with self.assertRaisesRegex(ValueError, "escaped YAML"):
-            authority.validate_workflow_permissions(
-                ".github/workflows/ksp-gate-authority.yml",
-                (FIXTURES / "permission-line-continuation.yml").read_text(),
-                POLICY,
-            )
-        continued_key = yaml.load(
-            (FIXTURES / "permission-line-continuation.yml").read_text(),
-            Loader=yaml.BaseLoader,
+        reproductions = (
+            (
+                "flow root mapping",
+                "{name: test, on: push, permissions: {statuses: write}, "
+                "jobs: {test: {runs-on: ubuntu-latest, steps: [{run: echo test}]}}}",
+            ),
+            (
+                "job flow permission without explicit workflow permission",
+                "on: push\n"
+                "jobs: {test: {permissions: {statuses: write}, "
+                "runs-on: ubuntu-latest, steps: [{run: echo test}]}}",
+            ),
+            (
+                "flow job permission mapping",
+                "on: push\npermissions: {contents: read}\n"
+                "jobs: {test: {permissions: {statuses: write}, "
+                "runs-on: ubuntu-latest, steps: [{run: echo test}]}}",
+            ),
         )
-        self.assertEqual(continued_key["permissions"]["checks"], "write")
-        with self.assertRaisesRegex(ValueError, "anchors and aliases|aliased or tagged"):
-            authority.validate_workflow_permissions(
-                ".github/workflows/ksp-gate-authority.yml",
-                (FIXTURES / "permission-alias-key.yml").read_text(),
-                POLICY,
+        for label, workflow in reproductions:
+            expected_error = (
+                "workflow-level permissions must be explicit"
+                if label.startswith("job flow permission without")
+                else "outside reviewed authority paths"
             )
-        alias_key = yaml.load(
-            (FIXTURES / "permission-alias-key.yml").read_text(),
-            Loader=yaml.BaseLoader,
-        )
-        self.assertEqual(alias_key["permissions"]["checks"], "write")
-        with self.assertRaisesRegex(ValueError, "explicit YAML mapping keys"):
-            authority.validate_workflow_permissions(
-                ".github/workflows/ksp-gate-authority.yml",
-                (FIXTURES / "permission-explicit-key.yml").read_text(),
-                POLICY,
-            )
-        explicit_key = yaml.load(
-            (FIXTURES / "permission-explicit-key.yml").read_text(),
-            Loader=yaml.BaseLoader,
-        )
-        self.assertEqual(explicit_key["permissions"]["checks"], "write")
-        for syntax in (
-            "permissions:\n  &.permission-name checks\n  *permission-name: write\n",
-            "permissions:\n  !!str checks: write\n",
-            "permissions: {checks: [write]}\n",
-            '"permissions": {checks: [write]}\n',
-            "name: &permission-key permissions\n*permission-key:\n  checks: write\n",
-            "!tag permissions:\n  checks: write\n",
-        ):
-            with self.subTest(syntax=syntax), self.assertRaises(ValueError):
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, expected_error):
                 authority.validate_workflow_permissions(
-                    ".github/workflows/ksp-gate-authority.yml", syntax, POLICY
+                    ".github/workflows/untrusted.yml", workflow, POLICY
                 )
-        with self.assertRaisesRegex(
-            ValueError, "contents/pull-requests/write-all|only checks/statuses"
+
+        for scope in ("checks", "statuses"):
+            with self.subTest(scope=scope), self.assertRaisesRegex(
+                ValueError, "outside reviewed authority paths"
+            ):
+                authority.validate_workflow_permissions(
+                    ".github/workflows/untrusted.yml",
+                    f"on: push\npermissions: {{contents: read}}\n"
+                    f"jobs: {{test: {{permissions: {{{scope}: write}}}}}}",
+                    POLICY,
+                )
+
+        for workflow in (
+            "on: pull_request_target\npermissions: {checks: write}\n"
+            "jobs: {review: {runs-on: ubuntu-latest}}",
+            "on: pull_request_target\npermissions: {statuses: write}\n"
+            "jobs: {review: {permissions: {contents: read, statuses: write}}}",
+            "on: {pull_request_target: {}, workflow_dispatch: {}}\n"
+            "permissions: {checks: write}\n"
+            "jobs: {review: {runs-on: ubuntu-latest}}",
         ):
-            authority.validate_workflow_permissions(
-                ".github/workflows/ksp-gate-authority.yml",
-                "on:\n  pull_request_target:\npermissions:\n  contents: write\n",
-                POLICY,
+            self.assertIsNone(
+                authority.validate_workflow_permissions(
+                    ".github/workflows/phase0-review-gate.yml", workflow, POLICY
+                )
             )
-        trusted_target = (
-            "on:\n  pull_request_target:\npermissions:\n  checks: write\n"
+
+        read_only = (
+            "on: [push, pull_request]\npermissions: {contents: read}\n"
+            "jobs: {build: {runs-on: ubuntu-latest}, "
+            "test: {permissions: read-all, runs-on: ubuntu-latest}}"
         )
         self.assertIsNone(
             authority.validate_workflow_permissions(
-                ".github/workflows/ksp-gate-authority.yml",
-                trusted_target,
+                ".github/workflows/untrusted.yml", read_only, POLICY
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "repository defaults are unverified"):
+            authority.validate_workflow_permissions(
+                ".github/workflows/untrusted.yml",
+                "on: push\njobs: {test: {runs-on: ubuntu-latest}}",
+                POLICY,
+            )
+
+        with self.assertRaisesRegex(ValueError, "outside reviewed authority paths"):
+            authority.validate_workflow_permissions(
+                ".github/workflows/untrusted.yml",
+                "on: push\npermissions: {statuses: write}\n"
+                "jobs: {test: {permissions: {statuses: write}}}",
+                POLICY,
+            )
+        self.assertIsNone(
+            authority.validate_workflow_permissions(
+                ".github/workflows/phase0-review-gate.yml",
+                "on: pull_request_target\npermissions: {statuses: write}\n"
+                "jobs: {review: {permissions: {contents: read}}}",
                 POLICY,
             )
         )
-        with self.assertRaisesRegex(ValueError, "pull_request jobs"):
+        self.assertIsNone(
+            authority.validate_workflow_permissions(
+                ".github/workflows/untrusted.yml",
+                "on: push\npermissions: write-all\n"
+                "jobs: {build: {permissions: {contents: read}}}",
+                POLICY,
+            )
+        )
+
+    def test_permission_decoder_handles_aliases_merges_and_write_all(self):
+        merged_permissions = (
+            "on: pull_request_target\n"
+            "read_permissions: &read_permissions {contents: read}\n"
+            "write_permission: &write_permission {checks: write}\n"
+            "permissions:\n  <<: [*read_permissions, *write_permission]\n"
+            "jobs: {review: {runs-on: ubuntu-latest}}"
+        )
+        self.assertIsNone(
             authority.validate_workflow_permissions(
                 ".github/workflows/phase0-review-gate.yml",
-                "on:\n  pull_request:\npermissions:\n  statuses: write\n",
+                merged_permissions,
+                POLICY,
+            )
+        )
+
+        for permissions in (
+            "write-all",
+            "{checks: write}",
+            '{\"chec\\u006bs\": write}',
+            '{checks: \"writ\\u0065\"}',
+        ):
+            workflow = (
+                "on: push\npermissions: "
+                + permissions
+                + "\njobs: {test: {runs-on: ubuntu-latest}}"
+            )
+            with self.subTest(permissions=permissions), self.assertRaises(ValueError):
+                authority.validate_workflow_permissions(
+                    ".github/workflows/untrusted.yml", workflow, POLICY
+                )
+
+        malformed = (
+            "on: push\npermissions: {checks: [write]}\n"
+            "jobs: {test: {runs-on: ubuntu-latest}}",
+            "on: push\npermissions: {checks: read, checks: write}\n"
+            "jobs: {test: {runs-on: ubuntu-latest}}",
+            "on: push\npermissions: {unknown-scope: write}\n"
+            "jobs: {test: {runs-on: ubuntu-latest}}",
+        )
+        for workflow in malformed:
+            with self.subTest(workflow=workflow), self.assertRaises(ValueError):
+                authority.validate_workflow_permissions(
+                    ".github/workflows/untrusted.yml", workflow, POLICY
+                )
+
+        mixed_triggers = (
+            "on: [pull_request_target, pull_request]\n"
+            "permissions: {checks: write}\n"
+            "jobs: {review: {runs-on: ubuntu-latest}}"
+        )
+        with self.assertRaisesRegex(ValueError, "forbidden on pull_request"):
+            authority.validate_workflow_permissions(
+                ".github/workflows/phase0-review-gate.yml",
+                mixed_triggers,
                 POLICY,
             )
 
@@ -306,20 +372,26 @@ class Phase0ReviewGateTests(unittest.TestCase):
             policy_path.write_text(AUTHORITY_POLICY.read_text())
             workflow = repo / ".github/workflows/ksp-gate-authority.yml"
             workflow.parent.mkdir(parents=True)
-            workflow.write_text("on:\n  pull_request_target:\npermissions:\n  contents: read\n")
+            workflow.write_text(
+                "on:\n  pull_request_target:\n"
+                "permissions:\n  contents: read\n"
+                "jobs:\n  authority:\n    runs-on: ubuntu-latest\n"
+            )
             git(repo, "add", ".")
             git(repo, "commit", "-q", "-m", "trusted base")
             base = git(repo, "rev-parse", "HEAD")
 
             spoof = repo / ".github/workflows/reviewer-workflow-spoof.yml"
             spoof.write_text(
-                "on:\n  pull_request:\npermissions:\n  statuses: write\n"
+                "on:\n  pull_request:\n"
+                "permissions:\n  statuses: write\n"
+                "jobs:\n  test:\n    runs-on: ubuntu-latest\n"
             )
-            policy_path.write_text(
-                '{"policy_version":1,"reviewed_authority_paths":'
-                '[".github/workflows/reviewer-workflow-spoof.yml"],'
-                '"blocked_permissions":[]}'
-            )
+            head_policy = json.loads(AUTHORITY_POLICY.read_text())
+            head_policy["reviewed_authority_paths"] = [
+                ".github/workflows/reviewer-workflow-spoof.yml"
+            ]
+            policy_path.write_text(json.dumps(head_policy))
             git(repo, "add", ".")
             git(repo, "commit", "-q", "-m", "untrusted workflow and policy")
             head = git(repo, "rev-parse", "HEAD")
@@ -350,6 +422,22 @@ class Phase0ReviewGateTests(unittest.TestCase):
         )
         self.assertNotIn("git checkout", text)
         self.assertEqual(text.count("${{ secrets.GITHUB_TOKEN }}"), 1)
+
+    def test_authority_installs_existing_hash_pinned_yaml_parser(self):
+        text = AUTHORITY_WORKFLOW.read_text()
+        self.assertIn("Install hash-pinned YAML parser", text)
+        self.assertIn("--require-hashes -r ksp-bootstrap/requirements-ci.txt", text)
+        self.assertIn("--only-binary=:all:", text)
+        self.assertIn("--no-deps", text)
+
+    def test_all_current_workflows_have_decodable_permissions(self):
+        for path in sorted((REPO_ROOT / ".github/workflows").glob("*.y*ml")):
+            with self.subTest(path=path.name):
+                authority.validate_workflow_permissions(
+                    path.relative_to(REPO_ROOT).as_posix(),
+                    path.read_text(),
+                    POLICY,
+                )
 
     def test_exact_target_exception_and_authority_policy_are_present(self):
         entries = {
