@@ -247,6 +247,25 @@ class Phase0ReviewGateTests(unittest.TestCase):
                     POLICY,
                 )
 
+        for trigger, scope in (
+            ("push", "actions"),
+            ("pull_request_review", "issues"),
+            ("pull_request_review_comment", "id-token"),
+            ("merge_group", "security-events"),
+            ("workflow_dispatch", "actions"),
+        ):
+            workflow = (
+                f"on: {trigger}\npermissions: {{contents: read}}\n"
+                f"jobs:\n  test:\n    permissions:\n      {scope}: write\n"
+                "    runs-on: ubuntu-latest\n"
+            )
+            with self.subTest(trigger=trigger, scope=scope), self.assertRaisesRegex(
+                ValueError, "write permission"
+            ):
+                authority.validate_workflow_permissions(
+                    ".github/workflows/untrusted.yml", workflow, POLICY
+                )
+
         for workflow in (
             "on: pull_request_target\npermissions: {checks: write}\n"
             "jobs: {review: {runs-on: ubuntu-latest}}",
@@ -316,6 +335,89 @@ class Phase0ReviewGateTests(unittest.TestCase):
             )
         )
 
+    def test_reserved_read_only_check_names_require_trusted_target_path(self):
+        for filename in (
+            "reserved-phase0-name.yml",
+            "reserved-independent-review-name.yml",
+            "reserved-authority-name.yml",
+        ):
+            with self.subTest(fixture=filename), self.assertRaisesRegex(
+                ValueError, "reserved check name outside safe authority context"
+            ):
+                authority.validate_workflow_permissions(
+                    ".github/workflows/untrusted.yml",
+                    (FIXTURES / filename).read_text(),
+                    POLICY,
+                )
+
+        authorized = (
+            "on: pull_request_target\npermissions: {contents: read}\n"
+            "jobs: {review: {name: 'Phase-0 reviewer scaffold (not required)', "
+            "runs-on: ubuntu-latest}}"
+        )
+        self.assertIsNone(
+            authority.validate_workflow_permissions(
+                ".github/workflows/phase0-review-gate.yml", authorized, POLICY
+            )
+        )
+        for trigger in ("pull_request", "workflow_dispatch"):
+            unsafe = authorized.replace("pull_request_target", trigger)
+            with self.subTest(trigger=trigger), self.assertRaisesRegex(
+                ValueError, "reserved check name outside safe authority context"
+            ):
+                authority.validate_workflow_permissions(
+                    ".github/workflows/phase0-review-gate.yml", unsafe, POLICY
+                )
+
+        computed = (
+            "on: push\npermissions: {contents: read}\n"
+            "jobs: {test: {name: '${{ matrix.name }}', runs-on: ubuntu-latest}}"
+        )
+        with self.assertRaisesRegex(ValueError, "computed or invalid check name"):
+            authority.validate_workflow_permissions(
+                ".github/workflows/untrusted.yml", computed, POLICY
+            )
+
+    def test_authority_policy_rejects_false_trigger_unknown_scope_and_unexpected_files(self):
+        for workflow in (
+            "off: push\npermissions: {contents: read}\n"
+            "jobs: {test: {runs-on: ubuntu-latest}}",
+            "on: push\npermissions: {models: write}\n"
+            "jobs: {test: {runs-on: ubuntu-latest}}",
+        ):
+            with self.subTest(workflow=workflow), self.assertRaises(ValueError):
+                authority.validate_workflow_permissions(
+                    ".github/workflows/untrusted.yml", workflow, POLICY
+                )
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            git(repo, "init", "-q")
+            git(repo, "config", "user.email", "test@example.invalid")
+            git(repo, "config", "user.name", "Phase0 test")
+            policy_path = repo / "ksp-bootstrap/policies/gate-authority.json"
+            policy_path.parent.mkdir(parents=True)
+            policy_path.write_text(AUTHORITY_POLICY.read_text())
+            workflow = repo / ".github/workflows/safe.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(
+                "on: push\npermissions: {contents: read}\n"
+                "jobs: {test: {runs-on: ubuntu-latest}}\n"
+            )
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "trusted base")
+            base = git(repo, "rev-parse", "HEAD")
+            (repo / ".github/workflows/not-a-workflow.txt").write_text("data")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "unexpected workflow entry")
+            head = git(repo, "rev-parse", "HEAD")
+            authority.configure_repo(repo)
+            try:
+                with self.assertRaisesRegex(ValueError, "unsupported workflow entry"):
+                    authority.validate_head_workflow_permissions(base, head)
+            finally:
+                authority.configure_repo(REPO_ROOT)
+
     def test_permission_decoder_handles_aliases_merges_and_write_all(self):
         merged_permissions = (
             "on: pull_request_target\n"
@@ -367,7 +469,7 @@ class Phase0ReviewGateTests(unittest.TestCase):
             "permissions: {checks: write}\n"
             "jobs: {review: {runs-on: ubuntu-latest}}"
         )
-        with self.assertRaisesRegex(ValueError, "forbidden on pull_request"):
+        with self.assertRaisesRegex(ValueError, "requires pull_request_target only"):
             authority.validate_workflow_permissions(
                 ".github/workflows/phase0-review-gate.yml",
                 mixed_triggers,
@@ -396,7 +498,7 @@ class Phase0ReviewGateTests(unittest.TestCase):
 
             spoof = repo / ".github/workflows/reviewer-workflow-spoof.yml"
             spoof.write_text(
-                "on:\n  pull_request:\n"
+                "on:\n  pull_request_target:\n"
                 "permissions:\n  statuses: write\n"
                 "jobs:\n  test:\n    runs-on: ubuntu-latest\n"
             )
@@ -412,7 +514,7 @@ class Phase0ReviewGateTests(unittest.TestCase):
             try:
                 with self.assertRaisesRegex(
                     ValueError,
-                    "outside reviewed authority paths|write permissions are forbidden",
+                    "checks/statuses write is outside reviewed authority paths",
                 ):
                     authority.validate_head_workflow_permissions(base, head)
             finally:
@@ -470,6 +572,26 @@ class Phase0ReviewGateTests(unittest.TestCase):
             entries,
         )
         self.assertEqual(POLICY["blocked_permissions"], ["checks", "statuses"])
+        self.assertEqual(POLICY["reviewed_write_permissions"], ["checks", "statuses"])
+        self.assertEqual(
+            POLICY["reviewed_write_exceptions"],
+            [
+                {
+                    "path": ".github/workflows/security-deep.yml",
+                    "job_id": "scorecard",
+                    "triggers": ["schedule", "workflow_dispatch"],
+                    "permissions": ["id-token", "security-events"],
+                }
+            ],
+        )
+        self.assertEqual(
+            POLICY["reserved_check_names"],
+            [
+                "Phase-0 reviewer scaffold (not required)",
+                "KSP Independent Review",
+                "KSP trusted gate authority",
+            ],
+        )
 
 
 if __name__ == "__main__":

@@ -23,6 +23,9 @@
     "ksp-bootstrap/tests/fixtures/reviewer/permission-statuses-write-head.yml",
     "ksp-bootstrap/tests/fixtures/reviewer/prompt-injection.json",
     "ksp-bootstrap/tests/fixtures/reviewer/reviewer-workflow-spoof.yml",
+    "ksp-bootstrap/tests/fixtures/reviewer/reserved-phase0-name.yml",
+    "ksp-bootstrap/tests/fixtures/reviewer/reserved-independent-review-name.yml",
+    "ksp-bootstrap/tests/fixtures/reviewer/reserved-authority-name.yml",
     "ksp-bootstrap/tests/test_gc0005_hardening.py",
     "ksp-bootstrap/tests/test_gate_authority.py",
     "ksp-bootstrap/tests/test_phase0_review_gate.py"

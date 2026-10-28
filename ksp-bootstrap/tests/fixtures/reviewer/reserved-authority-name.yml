@@ -1,0 +1,9 @@
+name: untrusted read-only workflow
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  KSP_trusted_gate_authority:
+    runs-on: ubuntu-latest
+    steps:
+      - run: exit 0
