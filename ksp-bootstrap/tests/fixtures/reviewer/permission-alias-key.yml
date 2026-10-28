@@ -1,0 +1,10 @@
+name: &permission-name checks
+on:
+  pull_request_target:
+permissions:
+  *permission-name: write
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "fixture only"

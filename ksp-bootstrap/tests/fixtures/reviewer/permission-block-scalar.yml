@@ -1,0 +1,11 @@
+name: folded-check-writer
+on:
+  pull_request_target:
+permissions:
+  checks: >-
+    write
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "fixture only"

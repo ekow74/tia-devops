@@ -1,0 +1,38 @@
+{
+  "policy_version": 1,
+  "reviewed_authority_paths": [
+    ".github/workflows/ksp-gate-authority.yml",
+    ".github/workflows/phase0-review-gate.yml"
+  ],
+  "blocked_permissions": [
+    "checks",
+    "statuses"
+  ],
+  "reviewed_write_permissions": [
+    "checks",
+    "statuses"
+  ],
+  "reviewed_write_exceptions": [
+    {
+      "path": ".github/workflows/security-deep.yml",
+      "job_id": "scorecard",
+      "triggers": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "permissions": [
+        "id-token",
+        "security-events"
+      ]
+    }
+  ],
+  "always_read_only_permissions": [
+    "contents",
+    "pull-requests"
+  ],
+  "reserved_check_names": [
+    "Phase-0 reviewer scaffold (not required)",
+    "KSP Independent Review",
+    "KSP trusted gate authority"
+  ]
+}

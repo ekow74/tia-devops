@@ -181,6 +181,11 @@ class GC0005HardeningTests(unittest.TestCase):
                     ".github/workflows/ksp-gate-authority.yml",
                     "zizmor:dangerous-triggers",
                 ),
+                (".github/workflows/phase0-review-gate.yml", "pull_request_target"),
+                (
+                    ".github/workflows/phase0-review-gate.yml",
+                    "zizmor:dangerous-triggers",
+                ),
             },
         )
         self.assertEqual(

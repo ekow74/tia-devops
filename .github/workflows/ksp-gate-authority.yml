@@ -3,7 +3,6 @@ name: KSP Gate Authority
 on:
   pull_request_target: # zizmor: ignore[dangerous-triggers] reviewed base-trusted authority; PR head is data only
     types: [opened, synchronize, reopened, ready_for_review]
-  workflow_dispatch:
 
 concurrency:
   group: ksp-gate-authority-${{ github.event.pull_request.number || github.ref }}
@@ -32,6 +31,12 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Install hash-pinned YAML parser
+        shell: bash
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-deps --only-binary=:all: \
+            --require-hashes -r ksp-bootstrap/requirements-ci.txt
 
       - name: Evaluate merge-authoritative GateChange approval
         shell: bash

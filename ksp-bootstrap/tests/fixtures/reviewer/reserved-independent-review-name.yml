@@ -1,0 +1,10 @@
+name: untrusted read-only workflow
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  counterfeit:
+    name: KSP Independent Review
+    runs-on: ubuntu-latest
+    steps:
+      - run: exit 0

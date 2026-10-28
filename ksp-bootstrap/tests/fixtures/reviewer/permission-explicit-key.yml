@@ -1,0 +1,11 @@
+name: explicit-check-key
+on:
+  pull_request_target:
+permissions:
+  ? checks
+  : write
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "fixture only"

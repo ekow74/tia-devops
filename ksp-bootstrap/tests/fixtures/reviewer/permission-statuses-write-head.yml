@@ -1,0 +1,11 @@
+name: untrusted-status-writer
+on:
+  pull_request:
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  Phase-0 reviewer scaffold (not required):
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "fixture only"

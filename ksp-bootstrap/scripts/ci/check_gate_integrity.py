@@ -11,7 +11,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
 POLICY_PATH = "ksp-bootstrap/policies/protected-paths.txt"
+AUTHORITY_POLICY_PATH = "ksp-bootstrap/policies/gate-authority.json"
 GATE_DIR = "ksp-bootstrap/governance/gate-changes"
 APPROVAL_DIR = "ksp-bootstrap/governance/approvals"
 
@@ -24,6 +30,55 @@ SUSPICIOUS_ADDITIONS = (
     "|| true",
 )
 THRESHOLD_RE = re.compile(r"(?i)(threshold|minimum|min_|recall|coverage)[^0-9-]*(-?\d+(?:\.\d+)?)")
+PERMISSION_SCOPES = frozenset(
+    {
+        "actions",
+        "attestations",
+        "checks",
+        "contents",
+        "deployments",
+        "discussions",
+        "id-token",
+        "issues",
+        "packages",
+        "pages",
+        "pull-requests",
+        "repository-projects",
+        "security-events",
+        "statuses",
+    }
+)
+PULL_REQUEST_TARGET_EVENTS = frozenset({"pull_request_target"})
+
+if yaml is not None:
+    class StrictWorkflowLoader(yaml.SafeLoader):
+        """Safe YAML loader that rejects duplicate explicit mapping keys."""
+
+        def construct_mapping(self, node, deep=False):
+            if isinstance(node, yaml.MappingNode):
+                seen = set()
+                for key_node, _ in node.value:
+                    if key_node.tag == "tag:yaml.org,2002:merge":
+                        continue
+                    key = self.construct_object(key_node, deep=deep)
+                    try:
+                        if key in seen:
+                            raise yaml.constructor.ConstructorError(
+                                "while constructing a workflow mapping",
+                                node.start_mark,
+                                f"duplicate mapping key {key!r}",
+                                key_node.start_mark,
+                            )
+                        seen.add(key)
+                    except TypeError as exc:
+                        raise yaml.constructor.ConstructorError(
+                            "while constructing a workflow mapping",
+                            node.start_mark,
+                            "unhashable mapping key",
+                            key_node.start_mark,
+                        ) from exc
+                self.flatten_mapping(node)
+            return super().construct_mapping(node, deep=deep)
 
 ROOT = Path.cwd()
 _POLICY_REF: str | None = None
@@ -73,6 +128,245 @@ def changed_files(base: str, head: str) -> list[tuple[str, str]]:
         if len(parts) >= 2:
             rows.append((parts[0], parts[-1]))
     return rows
+
+
+def _workflow_document(path: str, text: str) -> dict[str, Any]:
+    if yaml is None:
+        raise ValueError("PyYAML is required for workflow permission validation")
+    try:
+        workflow = yaml.load(text, Loader=StrictWorkflowLoader)
+    except (yaml.YAMLError, TypeError, ValueError) as exc:
+        raise ValueError(f"{path}: workflow YAML could not be decoded safely: {exc}") from exc
+    if not isinstance(workflow, dict) or not all(
+        isinstance(key, (str, bool)) for key in workflow
+    ):
+        raise ValueError(f"{path}: workflow YAML root must be a mapping")
+    if False in workflow:
+        raise ValueError(f"{path}: false/off is not a valid workflow trigger declaration")
+    if "on" in workflow and (True in workflow or False in workflow):
+        raise ValueError(f"{path}: ambiguous workflow trigger keys")
+    return workflow
+
+
+def _workflow_triggers(path: str, workflow: dict[str, Any]) -> set[str]:
+    trigger_key: str | bool | None = (
+        "on"
+        if "on" in workflow
+        else True
+        if True in workflow
+        else None
+    )
+    if trigger_key is None:
+        raise ValueError(f"{path}: workflow trigger declaration is missing")
+    declaration = workflow[trigger_key]
+    if isinstance(declaration, str):
+        triggers = {declaration}
+    elif isinstance(declaration, list) and all(
+        isinstance(item, str) for item in declaration
+    ):
+        triggers = set(declaration)
+    elif isinstance(declaration, dict) and all(
+        isinstance(item, str) for item in declaration
+    ):
+        triggers = set(declaration)
+    else:
+        raise ValueError(f"{path}: workflow trigger declaration is unsupported")
+    if not triggers:
+        raise ValueError(f"{path}: workflow trigger declaration is empty")
+    return triggers
+
+
+def _normalize_permissions(value: Any, source: str) -> dict[str, str]:
+    if isinstance(value, str):
+        if value == "read-all":
+            return dict.fromkeys(PERMISSION_SCOPES, "read")
+        if value == "write-all":
+            return dict.fromkeys(PERMISSION_SCOPES, "write")
+        raise ValueError(f"{source}: permission shorthand must be read-all or write-all")
+    if not isinstance(value, dict):
+        raise ValueError(f"{source}: permissions must be a mapping or supported shorthand")
+    permissions: dict[str, str] = {}
+    for scope, access in value.items():
+        if not isinstance(scope, str) or scope not in PERMISSION_SCOPES:
+            raise ValueError(f"{source}: unsupported permission scope {scope!r}")
+        if not isinstance(access, str) or access not in {"read", "write", "none"}:
+            raise ValueError(f"{source}: invalid access level for {scope}")
+        permissions[scope] = access
+    return permissions
+
+
+def _validate_effective_permissions(
+    path: str,
+    job_id: str,
+    display_name: str,
+    permissions: dict[str, str],
+    triggers: set[str],
+    policy: dict[str, Any],
+) -> None:
+    reviewed_path = path in policy["reviewed_authority_paths"]
+    target_only = triggers == PULL_REQUEST_TARGET_EVENTS
+    normalized_name = " ".join(
+        re.sub(r"[-_]+", " ", display_name).casefold().split()
+    )
+    reserved_names = {
+        " ".join(re.sub(r"[-_]+", " ", name).casefold().split())
+        for name in policy["reserved_check_names"]
+    }
+    if normalized_name in reserved_names and not (
+        reviewed_path and target_only
+    ):
+        raise ValueError(
+            f"{path}: job {job_id} display name {display_name!r} uses a reserved check "
+            "name outside safe authority context"
+        )
+
+    writes = {scope for scope, access in permissions.items() if access == "write"}
+    if not writes:
+        return
+    if writes & set(policy["always_read_only_permissions"]):
+        raise ValueError(f"{path}: job {job_id} writes a policy-read-only permission")
+    if writes - set(policy["reviewed_write_permissions"]):
+        allowed_exception = any(
+            exception["path"] == path
+            and exception["job_id"] == job_id
+            and set(exception["triggers"]) == triggers
+            and set(exception["permissions"]) == writes
+            for exception in policy["reviewed_write_exceptions"]
+        )
+        if not allowed_exception:
+            raise ValueError(
+                f"{path}: job {job_id} has a write permission without an exact reviewed exception"
+            )
+        return
+    if path not in policy["reviewed_authority_paths"]:
+        raise ValueError(
+            f"{path}: checks/statuses write is outside reviewed authority paths"
+        )
+    if not target_only:
+        raise ValueError(
+            f"{path}: checks/statuses write permission requires pull_request_target only"
+        )
+
+
+def validate_workflow_permissions(
+    path: str, text: str, policy: dict[str, Any]
+) -> None:
+    _validate_authority_policy(policy)
+    workflow = _workflow_document(path, text)
+    triggers = _workflow_triggers(path, workflow)
+    if "permissions" not in workflow:
+        raise ValueError(
+            f"{path}: workflow-level permissions must be explicit; repository defaults are unverified"
+        )
+    workflow_permissions = _normalize_permissions(
+        workflow["permissions"], f"{path}: workflow permissions"
+    )
+    jobs = workflow.get("jobs")
+    if not isinstance(jobs, dict) or not jobs:
+        raise ValueError(f"{path}: jobs must be a non-empty mapping")
+    for job_id, job in jobs.items():
+        if not isinstance(job_id, str) or not isinstance(job, dict):
+            raise ValueError(f"{path}: malformed job declaration")
+        display_name = job.get("name", job_id)
+        if (
+            not isinstance(display_name, str)
+            or not display_name.strip()
+            or "\n" in display_name
+            or "\r" in display_name
+            or "${{" in display_name
+            or "}}" in display_name
+        ):
+            raise ValueError(
+                f"{path}: job {job_id} has a computed or invalid check name"
+            )
+        if "permissions" in job:
+            effective_permissions = _normalize_permissions(
+                job["permissions"], f"{path}: job {job_id} permissions"
+            )
+        else:
+            effective_permissions = workflow_permissions
+        _validate_effective_permissions(
+            path,
+            job_id,
+            display_name,
+            effective_permissions,
+            triggers,
+            policy,
+        )
+
+
+def validate_head_workflow_permissions(base: str, head: str) -> None:
+    """Apply the base-trusted authority allowlist to all workflow files at PR head."""
+    listing = run("git", "ls-tree", "-r", "-z", "--name-only", head, "--", ".github/workflows")
+    paths = listing.rstrip("\0").split("\0") if listing else []
+    if not paths:
+        return
+    policy = _load_json(git_show(base, AUTHORITY_POLICY_PATH), AUTHORITY_POLICY_PATH)
+    _validate_authority_policy(policy)
+    for path in paths:
+        if (
+            not path.startswith(".github/workflows/")
+            or "\n" in path
+            or "\r" in path
+            or not path.endswith((".yml", ".yaml"))
+        ):
+            raise ValueError(f"PR head contains an unsupported workflow entry: {path!r}")
+        try:
+            text = git_show(head, path)
+        except subprocess.CalledProcessError as exc:
+            raise ValueError(f"cannot read workflow from {head}:{path}") from exc
+        validate_workflow_permissions(path, text, policy)
+
+
+def _validate_authority_policy(policy: dict[str, Any]) -> None:
+    if set(policy) != {
+        "policy_version",
+        "reviewed_authority_paths",
+        "blocked_permissions",
+        "always_read_only_permissions",
+        "reviewed_write_permissions",
+        "reviewed_write_exceptions",
+        "reserved_check_names",
+    }:
+        raise ValueError("base Gate Authority policy does not match the strict schema")
+    if policy.get("policy_version") != 1:
+        raise ValueError("base Gate Authority policy version is unsupported")
+    if policy.get("blocked_permissions") != ["checks", "statuses"]:
+        raise ValueError("base Gate Authority policy must block checks and statuses writes")
+    if policy.get("always_read_only_permissions") != ["contents", "pull-requests"]:
+        raise ValueError("base Gate Authority policy must keep contents and pull-requests read-only")
+    if policy.get("reviewed_write_permissions") != ["checks", "statuses"]:
+        raise ValueError("base Gate Authority policy has unsupported reviewed write permissions")
+    exceptions = policy.get("reviewed_write_exceptions")
+    if (
+        not isinstance(exceptions, list)
+        or len(exceptions) != 1
+        or not isinstance(exceptions[0], dict)
+        or set(exceptions[0]) != {"path", "job_id", "triggers", "permissions"}
+        or exceptions[0]["path"] != ".github/workflows/security-deep.yml"
+        or exceptions[0]["job_id"] != "scorecard"
+        or exceptions[0]["triggers"] != ["schedule", "workflow_dispatch"]
+        or exceptions[0]["permissions"] != ["id-token", "security-events"]
+    ):
+        raise ValueError("base Gate Authority policy has unsupported workflow write exceptions")
+    reserved_names = policy.get("reserved_check_names")
+    if (
+        not isinstance(reserved_names, list)
+        or not reserved_names
+        or not all(isinstance(name, str) and name.strip() for name in reserved_names)
+        or len(reserved_names) != len(set(reserved_names))
+    ):
+        raise ValueError("base Gate Authority policy has invalid reserved check names")
+    paths = policy.get("reviewed_authority_paths")
+    if not isinstance(paths, list) or not paths or not all(
+        isinstance(path, str)
+        and path.startswith(".github/workflows/")
+        and path.endswith((".yml", ".yaml"))
+        for path in paths
+    ):
+        raise ValueError("base Gate Authority policy has an invalid authority path list")
+    if len(paths) != len(set(paths)):
+        raise ValueError("base Gate Authority policy has an invalid authority path list")
 
 
 def _load_json(text: str, source: str) -> dict[str, Any]:
@@ -291,6 +585,13 @@ def main() -> int:
     except (OSError, subprocess.CalledProcessError, ValueError) as exc:
         print("gate-integrity: FAIL")
         print(f" - cannot evaluate protected paths: {exc}")
+        return 1
+
+    try:
+        validate_head_workflow_permissions(ns.base, ns.head)
+    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+        print("gate-integrity: FAIL")
+        print(f" - cannot verify workflow authority permissions: {exc}")
         return 1
 
     if not protected_changes:
