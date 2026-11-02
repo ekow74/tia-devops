@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KSP Gate Mockup</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --line:#30363d; --text:#e6edf3; --muted:#8b949e;
+          --red:#f85149; --amber:#d29922; --green:#3fb950; --btn:#238636; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--text);
+         font:15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width:760px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .note { color:var(--muted); margin:0 0 24px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:28px 0 8px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .head { display:flex; gap:12px; align-items:flex-start; padding:14px 16px; border-bottom:1px solid var(--line); }
+  .dot { flex:none; width:22px; height:22px; border-radius:50%; display:grid; place-items:center;
+         font-weight:700; font-size:13px; color:#0d1117; margin-top:2px; }
+  .head b { display:block; }
+  .head span { color:var(--muted); }
+  ul { margin:0; padding:10px 16px 12px 50px; color:var(--muted); }
+  li { margin:2px 0; }
+  li.ok::marker { content:"✓  "; color:var(--green); }
+  li.no::marker { content:"✕  "; color:var(--red); }
+  li.wait::marker { content:"●  "; color:var(--amber); }
+  .foot { display:flex; gap:10px; flex-wrap:wrap; align-items:center; padding:12px 16px; border-top:1px solid var(--line); }
+  button { font:inherit; font-weight:600; border-radius:6px; padding:6px 14px; border:1px solid var(--line);
+           background:#21262d; color:var(--text); }
+  button.go { background:var(--btn); border-color:var(--btn); color:#fff; }
+  button[disabled] { opacity:.45; }
+  .foot span { color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Pull request: "Add backup schedule"</h1>
+  <p class="note">Throwaway mockup for Gate 1. It shows what the Owner sees in the gate box on a pull request. Wording and states are what matters here, not the styling.</p>
+
+  <h2>State 1 · Needs your approval</h2>
+  <div class="card">
+    <div class="head"><div class="dot" style="background:var(--amber)">!</div>
+      <div><b>KSP Gate: waiting for Owner</b><span>All automatic checks passed. This change touches nothing safety-critical.</span></div></div>
+    <ul>
+      <li class="ok">Tests and safety scans passed</li>
+      <li class="ok">No safety rules changed</li>
+      <li class="wait">Owner approval of this exact version</li>
+    </ul>
+    <div class="foot"><button class="go">Approve &amp; merge</button><span>One click. Takes about a minute.</span></div>
+  </div>
+
+  <h2>State 2 · Blocked: tampering detected</h2>
+  <div class="card">
+    <div class="head"><div class="dot" style="background:var(--red)">✕</div>
+      <div><b>KSP Gate: blocked</b><span>This change tries to weaken the gate itself.</span></div></div>
+    <ul>
+      <li class="no">Removes or renames the gate</li>
+      <li class="no">Adds a look-alike "passed" check (ignored: it didn't come from the real gate)</li>
+      <li class="wait">Needs an independent safety review before it can even be considered</li>
+    </ul>
+    <div class="foot"><button disabled>Merge</button><span>Nobody can merge this, including the robot. Only the Owner's documented emergency path can override.</span></div>
+  </div>
+
+  <h2>State 3 · Ready to merge</h2>
+  <div class="card">
+    <div class="head"><div class="dot" style="background:var(--green)">✓</div>
+      <div><b>KSP Gate: passed</b><span>Approved by Owner for this exact version.</span></div></div>
+    <ul>
+      <li class="ok">Tests and safety scans passed</li>
+      <li class="ok">Owner approved, tied to this version (a newer push needs re-approval)</li>
+    </ul>
+    <div class="foot"><button class="go">Merge</button><span>Only the Owner can press this. The robot can't.</span></div>
+  </div>
+</main>
+</body>
+</html>
