@@ -16,6 +16,16 @@ Protected paths are listed in `policies/protected-paths.txt`. In the production 
 
 The repo ruleset is an external control and cannot be considered complete until it is applied to the private production repo and tested with the Governor identity.
 
+### Owner-decision approval path (tia-devops only)
+
+A GateChange may use `reviewer_kind: OWNER` instead of `CLAUDE` only when **every** path in its scope is a **new** file under `ksp-bootstrap/governance/decisions/` (an Owner decision record). For such a GateChange:
+
+- the Owner's explicit approval of the exact PR head SHA is the review; the approval receipt's `review_revision_id` points to where the Owner gave it (for example a Claude session URL);
+- the receipt is still published on trusted `main` before merge and must bind the GateChange, ordered scope, threshold, review reference, and head SHA, exactly as for any other GateChange;
+- merge authority remains with the Owner.
+
+Any GateChange that also touches workflows, CODEOWNERS, checker scripts, policies, tests, fixtures, or an existing decision record keeps the independent `CLAUDE` (or `RN`) review. This path inherits D-0023's process-only boundary and does not transfer to `ksp-platform`, where CODEOWNERS review enforced by the ruleset replaces it.
+
 ## N4 — Repository enforcement boundary
 
 Owner decision `D-0023` selects option A for `tia-devops` only. `tia-devops` is a non-production template/reference repository, so its GateChange records, approval ledger, and CI checks are process and audit controls; this repository does **not** claim that those artifacts are an unbypassable GitHub authorization boundary. That limitation does not block approval of the bootstrap.

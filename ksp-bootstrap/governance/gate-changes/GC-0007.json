@@ -1,0 +1,13 @@
+{
+  "gate_change_id": "GC-0007",
+  "decision_log_id": "D-0025",
+  "reason": "Record Owner decision D-0025: ksp-platform will be a private repository on the ekow74 personal account under GitHub Pro, and the D-0023 ruleset-required-workflow precondition will be met by a dedicated KSP Gate Authority GitHub App whose check run is required with its source pinned to that App. Resolves the D-0023 plan_dependency (R3) without new spend and without marking any activation precondition as met.",
+  "reviewer_kind": "OWNER",
+  "review_status": "PENDING_EXTERNAL_BASE_LEDGER",
+  "review_reference": "KSP_GateChange_GC0007_OWNER_APPROVAL_2026-11-02",
+  "approval_threshold": "R3 Owner decision D-0025: GitHub plan, hosting account, and alternative merge-authoritative gate design for ksp-platform",
+  "scope": [
+    "ksp-bootstrap/governance/decisions/D-0025.json"
+  ],
+  "note": "Owner-decision approval path (KSP_CICD_SECURITY_BASELINE_S02.md, A1): scope is a single new decision record, so the Owner is the reviewer. PR cannot authorize itself. Owner approval must bind this GateChange, ordered scope, threshold, review reference and final head SHA, then be published only as ksp-bootstrap/governance/approvals/GC-0007.json on trusted main. D-0025 authorizes no new spend and does not activate ksp-platform; D-0023 activation_block remains in force."
+}
