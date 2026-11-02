@@ -1,12 +1,19 @@
 # Status: ksp-platform repository + enforcement controls
 
 - Gate 1 — Product: APPROVED 2026-11-02
-- Gate 2 — Architecture: APPROVED 2026-11-02; amended at Gate 3 (step 5, no schedule) — re-approval pending
-- Gate 3 — Program Design: in progress
-- Gate 4 — Slice plan: pending
+- Gate 2 — Architecture: APPROVED 2026-11-02 (re-approved with Gate 3 amendment 2026-11-02)
+- Gate 3 — Program Design: APPROVED 2026-11-02
+- Gate 4 — Slice plan: in progress
 
 ## Slices
-_(written at Gate 4)_
+- [ ] Slice 1 — tracer bullet: App-posted `KSP Gate` required by ruleset (Owner creates repo, App, environment)
+- [ ] Slice 2 — real gate happy path: routine passes, protected-without-GateChange blocked; safety CI, CODEOWNERS
+- [ ] Slice 3 — robot identity: `ekow74-bot`, ruleset v2 (reviews, restrict updates), D-0026; two-click merge timed
+- [ ] Slice 4 — safety-rule changes: GateChange + `KSP-REVIEW:` attestation + re-check workflow
+- [ ] Slice 5 — tamper detection
+- [ ] Slice 6 — post-merge audit
+- [ ] Slice 7 — ruleset drift check
+- [ ] Slice 8 — bypass drill (target 0/8), docs/external, move plan docs to ksp-platform
 
 ## Notes for a fresh session
 
