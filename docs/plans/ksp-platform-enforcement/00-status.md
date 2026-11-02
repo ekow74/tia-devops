@@ -19,3 +19,4 @@ _(written at Gate 4)_
 - Reference implementation to reuse at Gate 2: `ksp-bootstrap/` (gate checker, GateChange/approval ledger, tests) and `.github/workflows/ksp-gate-authority.yml`.
 - Owner feedback (2026-11-02): the approval process felt like too much work. Keep Owner effort per routine change minimal — this is a product requirement, not a nice-to-have.
 - Known gap: GC-0006 cites D-0024, which is not in `decisions/`.
+- Gate 2 finding (2026-11-02): Claude sessions act on GitHub as `ekow74` (admin). Architecture therefore introduces a separate robot machine account; see `02-architecture.md`.
