@@ -1,0 +1,37 @@
+{
+  "decision_id": "D-0025",
+  "record_type": "OWNER_DECISION",
+  "title": "ksp-platform hosting account, GitHub plan, and merge-authoritative gate design",
+  "date": "2026-11-02",
+  "status": "ACCEPTED",
+  "owner_decision": "B",
+  "scope": "ksp-platform (future private production repository)",
+  "supersedes": [],
+  "relates_to": ["D-0023"],
+  "resolves": "D-0023 plan_dependency (R3): the Owner selects the GitHub plan and the alternative enforcement design for the ruleset-required-workflow precondition.",
+  "facts": {
+    "hosting_account": "ekow74 (GitHub personal account, not an organization)",
+    "github_plan": "GitHub Pro (personal), already paid annually by the Owner",
+    "repository_visibility": "private"
+  },
+  "decision": "Create ksp-platform as a private repository on the ekow74 personal account under the existing GitHub Pro plan. Do not move it to an organization at this time. Satisfy the D-0023 precondition 'require the merge-authoritative KSP gate through a ruleset-required workflow executed from a trusted base or pinned ref' with an alternative enforcement design: a dedicated KSP Gate Authority GitHub App publishes the decisive check run, and the ksp-platform ruleset requires that check with the expected source pinned to that App, so that a check of the same name produced by a pull request's own workflow (GitHub Actions) cannot satisfy it.",
+  "options_considered": {
+    "A": "Move ksp-platform to an Owner-controlled organization and use the native organization ruleset 'require workflows to pass' rule. Rejected for now: likely requires a paid GitHub Team plan in addition to the existing Pro plan.",
+    "B": "Stay on ekow74 with GitHub Pro and use a dedicated GitHub App as the merge-authoritative gate source. Selected.",
+    "C": "Stay on ekow74 with only a same-named required status check. Rejected: D-0023 states a same-named status check is not equivalent, and the risk acceptance in D-0023 must not transfer to ksp-platform."
+  },
+  "rationale": "GitHub documents the 'require workflows to pass' rule for organization and enterprise rulesets; availability for a personal-account private repository on GitHub Pro is not confirmed. Option B avoids additional spend while preserving the D-0023 requirement that the merge-authoritative gate cannot be spoofed, removed, or renamed by pull-request-head code.",
+  "gate_app_requirements": [
+    "The App is dedicated to the KSP merge gate and is distinct from the automation identity; it has no repository administration, merge, push-to-main, or ruleset-bypass permission (checks: write and the minimum read permissions only).",
+    "The App evaluates GateChange integrity using checker code from trusted base state or a pinned ref, and never checks out, imports, sources, or executes pull-request-head code.",
+    "The ksp-platform ruleset requires the App's check run with the expected source pinned to the App, not to 'any source' and not to GitHub Actions.",
+    "The App's private key and webhook secret are stored outside ksp-platform and are never committed; only their names are recorded under docs/external/.",
+    "If the App is unavailable, the required check is absent and the pull request is unmergeable (fail closed).",
+    "Negative enforcement tests are run and retained proving that: a pull request adding a same-named passing job remains unmergeable; a pull request removing or renaming any workflow remains unmergeable when the App check is missing or failing; the automation identity cannot push or merge to main with the App check failing or absent."
+  ],
+  "known_residual_risk": "On a personal account the Owner is the repository administrator and can always edit or disable rulesets. This is accepted as the documented emergency path, reserved to the Owner. Any use of it must be recorded as a new Owner decision. The automation identity must never be granted administrator or bypass rights.",
+  "verification_required": "During Gate 2 (Architecture) of the ksp-platform repository feature, confirm on the ksp-platform repository Settings -> Rules page that, on GitHub Pro for a personal account, rulesets are enforced for the private repository and that a required status check can be restricted to a specific GitHub App source. If either is not available, this decision must be revisited before implementation.",
+  "spend": "No new spend is authorized. The existing GitHub Pro subscription is used. Hosting cost for the Gate Authority App is out of scope and requires a separate Owner decision if it is non-zero.",
+  "activation_block": "D-0023 activation preconditions and activation_block remain in force. This decision changes how one precondition is met; it does not mark any precondition as met. Until every precondition is implemented and evidenced, protected-path merge authority, Terraform apply, production promotion, and production deployment remain prohibited in ksp-platform.",
+  "revisit_trigger": "If the Gate 2 verification fails, if ksp-platform gains additional maintainers, or before moving ksp-platform to an organization."
+}
