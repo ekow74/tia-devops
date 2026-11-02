@@ -6,7 +6,7 @@
 - Gate 4 — Slice plan: APPROVED 2026-11-02
 
 ## Slices
-- [ ] Slice 1 — tracer bullet: App-posted `KSP Gate` required by ruleset (Owner creates repo, App, environment)
+- [x] Slice 1 — tracer bullet: App-posted `KSP Gate` required by ruleset (Owner creates repo, App, environment) — DONE 2026-11-02
 - [ ] Slice 2 — real gate happy path: routine passes, protected-without-GateChange blocked; safety CI, CODEOWNERS
 - [ ] Slice 3 — robot identity: `ekow74-bot`, ruleset v2 (reviews, restrict updates), D-0026; two-click merge timed
 - [ ] Slice 4 — safety-rule changes: GateChange + `KSP-REVIEW:` attestation + re-check workflow
@@ -28,3 +28,10 @@
 - Known gap: GC-0006 cites D-0024, which is not in `decisions/`.
 - Gate 2 finding (2026-11-02): Claude sessions act on GitHub as `ekow74` (admin). Architecture therefore introduces a separate robot machine account; see `02-architecture.md`.
 - Slice 1 (2026-11-02): `actions/create-github-app-token` pinned to v3.3.0 (`64ab729a6294000f5aa4a4bc0b73d1f32bc45510`), which authenticates by Client ID. Environment secret names are therefore `KSP_GATE_APP_CLIENT_ID` and `KSP_GATE_APP_PRIVATE_KEY` (Gate 3 said `KSP_GATE_APP_ID`). The App ID is still needed as the ruleset's `integration_id`.
+- Slice 1 results (2026-11-02):
+  - `ekow74/ksp-platform` created (private). Gate App `ksp-gate-authority-ekow74`, App ID 5587095, installed on ksp-platform only.
+  - Environment `gate-authority`: deployment branch `main` only. Secrets `KSP_GATE_APP_ID` and `KSP_GATE_APP_PRIVATE_KEY`; the stub uses the deprecated `app-id` input. A `KSP_GATE_APP_CLIENT_ID` secret may also exist and is unused. TODO: switch to `client-id`.
+  - Ruleset `main-protection` (id 26409443) is active and requires `KSP Gate` with integration_id 5587095. JSON is at `ksp-platform/.github/rulesets/main.json` (PR ekow74/ksp-platform#1).
+  - Verified: verification items 1 (enforced on Pro private personal repo), 2 (App-pinned check), and 4 (environment works under `pull_request_target`). Item 3 waits for Slice 3.
+  - Drill scenario 1 preview: direct push to main as ekow74 was rejected ("Required status check 'KSP Gate' is expected").
+  - Finding: this Claude session's proxy blocks ruleset writes (HTTP 403), so the Owner must import rulesets in the UI.
