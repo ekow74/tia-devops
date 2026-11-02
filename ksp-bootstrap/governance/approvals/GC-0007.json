@@ -1,0 +1,13 @@
+{
+  "approval_consumed_by": "GC-0007",
+  "approval_id": "OWNER-GC-0007-S01-2026-11-02",
+  "approved_gate_change_id": "GC-0007",
+  "approved_head_sha": "8c76aa6c824c68dc0ab3eac8133388fff2e799b2",
+  "approved_scope": [
+    "ksp-bootstrap/governance/decisions/D-0025.json"
+  ],
+  "approved_threshold": "R3 Owner decision D-0025: GitHub plan, hosting account, and alternative merge-authoritative gate design for ksp-platform",
+  "decision": "APPROVED",
+  "review_reference": "KSP_GateChange_GC0007_OWNER_APPROVAL_2026-11-02",
+  "review_revision_id": "claude-session:https://claude.ai/code/session_01FapNge4bUjdD69oLhvhw51@2026-11-02"
+}
