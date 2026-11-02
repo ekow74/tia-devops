@@ -27,3 +27,4 @@
 - Owner feedback (2026-11-02): the approval process felt like too much work. Keep Owner effort per routine change minimal — this is a product requirement, not a nice-to-have.
 - Known gap: GC-0006 cites D-0024, which is not in `decisions/`.
 - Gate 2 finding (2026-11-02): Claude sessions act on GitHub as `ekow74` (admin). Architecture therefore introduces a separate robot machine account; see `02-architecture.md`.
+- Slice 1 (2026-11-02): `actions/create-github-app-token` pinned to v3.3.0 (`64ab729a6294000f5aa4a4bc0b73d1f32bc45510`), which authenticates by Client ID. Environment secret names are therefore `KSP_GATE_APP_CLIENT_ID` and `KSP_GATE_APP_PRIVATE_KEY` (Gate 3 said `KSP_GATE_APP_ID`). The App ID is still needed as the ruleset's `integration_id`.
