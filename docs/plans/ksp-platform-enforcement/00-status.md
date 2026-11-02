@@ -1,8 +1,8 @@
 # Status: ksp-platform repository + enforcement controls
 
 - Gate 1 — Product: APPROVED 2026-11-02
-- Gate 2 — Architecture: in progress
-- Gate 3 — Program Design: pending
+- Gate 2 — Architecture: APPROVED 2026-11-02; amended at Gate 3 (step 5, no schedule) — re-approval pending
+- Gate 3 — Program Design: in progress
 - Gate 4 — Slice plan: pending
 
 ## Slices

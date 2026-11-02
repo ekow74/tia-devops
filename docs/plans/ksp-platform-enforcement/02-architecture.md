@@ -64,10 +64,7 @@ Main path, for a routine change:
    - runs the checker from `main`;
    - posts `KSP Gate` as the App: *waiting for Owner* / *blocked: tampering* / *passed* (the three mockup states).
 4. **The Owner clicks Approve** in GitHub.
-5. **The gate re-evaluates:**
-   - the robot dispatches the gate workflow on `main` with the PR number (code still comes from `main`);
-   - a 10-minute schedule on `main` re-checks open PRs as a backstop;
-   - the gate confirms the approval is on the current head SHA, then posts *passed*.
+5. *(Amended at Gate 3, see `03-program-design.md`.)* For a **routine** change, `KSP Gate` already shows *passed* at step 3, and the ruleset's own review rules enforce the Owner's approval, so nothing re-runs. For a **safety-rule** change, the Owner's review starts a secret-free re-check workflow that dispatches the gate on `main`, and the gate confirms the attestation is on the current head SHA. There is no periodic schedule.
 6. **The Owner clicks Merge.** The robot can't, because of the restrict-updates rule.
 7. **Post-merge audit** (push to `main`): confirms the merged PR had `KSP Gate` = passed from the App plus the Owner's approval on that SHA. If not (for example the emergency bypass was used), it opens an issue: "bypass used — record an Owner decision."
 

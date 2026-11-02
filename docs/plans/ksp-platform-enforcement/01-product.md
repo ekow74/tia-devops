@@ -14,7 +14,7 @@ What's wanted:
 
 1. A new private home for KSP where the safety rules are **enforced by GitHub itself**, not just written down.
 2. The robot can do everything routine, but **cannot** put anything onto the main line by itself, **cannot** switch the rules off, and **cannot** fake a passing check.
-3. Approving a normal change takes the Owner **one look and one click**.
+3. Approving a normal change takes the Owner **one look and two clicks** (Approve, then Merge).
 
 ## Success metric
 
@@ -31,12 +31,12 @@ What's wanted:
 
 Each attempt has to be blocked, with saved evidence (a screenshot or log) showing it was blocked.
 
-**Guardrail (must not regress):** for a routine change that passes every check, the Owner needs **under 2 minutes and one click** to merge. Only changes to the safety rules themselves need the extra independent review.
+**Guardrail (must not regress):** for a routine change that passes every check, the Owner needs **under 2 minutes and two clicks (Approve, then Merge)** to merge (amended at Gate 2, approved 2026-11-02). Only changes to the safety rules themselves need the extra independent review.
 
 ## Announcement — the blog post before the feature
 
 > **KSP now has a locked front door.**
-> KSP's code has moved into its own private home, where the safety rules are enforced by GitHub, not just written in a document. The AI can still write code, fix problems and open changes all day, but it can no longer push to the main line, switch the rules off, or fake a passing check. We proved this by having it try all eight ways in, and every one was blocked. For routine work, approving a change is one look and one click. Only changes to the safety rules themselves get an extra independent review. This is the foundation every other part of KSP will be built on.
+> KSP's code has moved into its own private home, where the safety rules are enforced by GitHub, not just written in a document. The AI can still write code, fix problems and open changes all day, but it can no longer push to the main line, switch the rules off, or fake a passing check. We proved this by having it try all eight ways in, and every one was blocked. For routine work, approving a change is one look and two clicks. Only changes to the safety rules themselves get an extra independent review. This is the foundation every other part of KSP will be built on.
 
 ## What this feature does NOT do
 
