@@ -35,3 +35,10 @@
   - Drill scenario 1 preview: direct push to main as ekow74 was rejected ("Required status check 'KSP Gate' is expected").
   - Finding: this Claude session's proxy blocks ruleset writes (HTTP 403), so the Owner must import rulesets in the UI.
 - PR ekow74/ksp-platform#1 (ruleset v1 JSON) merged by ekow74 on 2026-11-02.
+- Slice 2 in progress (2026-11-03): PR ekow74/ksp-platform#2 adds CODEOWNERS (`* @ekow74`), ruleset v2 JSON (not yet imported), D-0026 (PROPOSED), and docs/external/github.md. Remaining Owner steps, in order:
+  1. Merge #2.
+  2. Create the robot machine account.
+  3. Invite it to ksp-platform with write access, and accept the invite as the robot.
+  4. Delete ruleset v1 and import v2 from `.github/rulesets/main.json`.
+  5. Switch claude.ai's GitHub connection to the robot, then start a **new** session.
+  After that, the new session (acting as the robot) opens a test PR, the Owner approves and merges it with timing, and the robot's merge attempt must be refused.
