@@ -42,3 +42,16 @@
   4. Delete ruleset v1 and import v2 from `.github/rulesets/main.json`.
   5. Switch claude.ai's GitHub connection to the robot, then start a **new** session.
   After that, the new session (acting as the robot) opens a test PR, the Owner approves and merges it with timing, and the robot's merge attempt must be refused.
+- Slice 2 progress (2026-11-03):
+  - PR ekow74/ksp-platform#2 merged. Robot account `ekow74-bot` created and invited (Owner reports invite accepted; this session's proxy cannot read the collaborators API).
+  - Ruleset v1 deleted. **Ruleset v2 is live: id 26423899**, active.
+    - Rules: deletion, non_fast_forward, update, pull_request (1 approval, code owner, dismiss stale, last-push approval), and required `KSP Gate` from integration 5587095.
+    - Bypass: RepositoryRole 5 (admin), pull_request mode.
+    - The live API also returns `require_extra_approval_for_unattributed_changes: true` and `required_reviewers: []`, which are not in the committed JSON. The drift check (Slice 6) must normalize them.
+  - The API reports `current_user_can_bypass: pull_requests_only` for this ekow74-backed session. This confirms why the switch to the robot is needed.
+  - **Next (Owner):** switch claude.ai's GitHub connection to `ekow74-bot`, then start a **new** Claude session with `ekow74/ksp-platform` selected.
+  - **Next (new session, as robot):**
+    1. Confirm `gh api user` returns `ekow74-bot`.
+    2. Open a routine test PR; the Owner times Approve + Merge.
+    3. Attempt a robot merge of an approved PR; it must be refused (verification item 3).
+    4. Mark D-0026 ACCEPTED via PR, and tick Slice 2.
