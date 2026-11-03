@@ -3,17 +3,16 @@
 - Gate 1 — Product: APPROVED 2026-11-02
 - Gate 2 — Architecture: APPROVED 2026-11-02 (re-approved with Gate 3 amendment 2026-11-02)
 - Gate 3 — Program Design: APPROVED 2026-11-02
-- Gate 4 — Slice plan: APPROVED 2026-11-02
+- Gate 4 — Slice plan: APPROVED 2026-11-02; revised 2026-11-03 (reorder) — re-approval pending
 
 ## Slices
-- [x] Slice 1 — tracer bullet: App-posted `KSP Gate` required by ruleset (Owner creates repo, App, environment) — DONE 2026-11-02
-- [ ] Slice 2 — real gate happy path: routine passes, protected-without-GateChange blocked; safety CI, CODEOWNERS
-- [ ] Slice 3 — robot identity: `ekow74-bot`, ruleset v2 (reviews, restrict updates), D-0026; two-click merge timed
-- [ ] Slice 4 — safety-rule changes: GateChange + `KSP-REVIEW:` attestation + re-check workflow
-- [ ] Slice 5 — tamper detection
-- [ ] Slice 6 — post-merge audit
-- [ ] Slice 7 — ruleset drift check
-- [ ] Slice 8 — bypass drill (target 0/8), docs/external, move plan docs to ksp-platform
+- [x] Slice 1 — tracer bullet: App-posted `KSP Gate` required by ruleset — DONE 2026-11-02
+- [ ] Slice 2 — robot identity: `ekow74-bot`, ruleset v2 (reviews, restrict updates, admin bypass), CODEOWNERS, D-0026; two-click merge timed
+- [ ] Slice 3 — real gate incl. safety-rule path: policy + evaluate + GateChange + `KSP-REVIEW:` attestation + re-check workflow + safety CI
+- [ ] Slice 4 — tamper detection
+- [ ] Slice 5 — post-merge audit
+- [ ] Slice 6 — ruleset drift check
+- [ ] Slice 7 — bypass drill (target 0/8), docs/external, client-id switch, move plan docs to ksp-platform
 
 ## Notes for a fresh session
 
@@ -35,3 +34,4 @@
   - Verified: verification items 1 (enforced on Pro private personal repo), 2 (App-pinned check), and 4 (environment works under `pull_request_target`). Item 3 waits for Slice 3.
   - Drill scenario 1 preview: direct push to main as ekow74 was rejected ("Required status check 'KSP Gate' is expected").
   - Finding: this Claude session's proxy blocks ruleset writes (HTTP 403), so the Owner must import rulesets in the UI.
+- PR ekow74/ksp-platform#1 (ruleset v1 JSON) merged by ekow74 on 2026-11-02.
