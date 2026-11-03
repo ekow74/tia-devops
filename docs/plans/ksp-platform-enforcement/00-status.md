@@ -3,7 +3,7 @@
 - Gate 1 — Product: APPROVED 2026-11-02
 - Gate 2 — Architecture: APPROVED 2026-11-02 (re-approved with Gate 3 amendment 2026-11-02)
 - Gate 3 — Program Design: APPROVED 2026-11-02
-- Gate 4 — Slice plan: APPROVED 2026-11-02; revised 2026-11-03 (reorder) — re-approval pending
+- Gate 4 — Slice plan: APPROVED 2026-11-02; revised 2026-11-03 (reorder), re-approved 2026-11-03
 
 ## Slices
 - [x] Slice 1 — tracer bullet: App-posted `KSP Gate` required by ruleset — DONE 2026-11-02
